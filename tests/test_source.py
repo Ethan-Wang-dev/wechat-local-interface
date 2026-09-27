@@ -486,7 +486,7 @@ class WeChatSecondaryResourceTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.base = Path(self.tmp.name)
         self.root = self.base / "snapshot"
-        for name in ("contact", "message", "favorite", "sns"):
+        for name in ("contact", "message", "favorite", "sns", "session", "general"):
             (self.root / name).mkdir(parents=True)
         with sqlite3.connect(self.root / "contact/contact.db") as con:
             con.execute("CREATE TABLE contact(username TEXT, nick_name TEXT, remark TEXT)")
@@ -505,12 +505,22 @@ class WeChatSecondaryResourceTests(unittest.TestCase):
                 (1, 1, 1700000000, "<favitem><desc>要记住的收藏</desc></favitem>", "person-a", "群聊", b"\\xff\\xfe"),
                 (2, 5, 1700000100, "<favitem><item><pagetitle>一篇文章</pagetitle><desc>收藏文章正文</desc><url>https://example.com/article</url></item></favitem>", "person-a", "群聊", b"\\xff\\xfe"),
             ])
+            con.execute("CREATE TABLE fav_tag_db_item(local_id INTEGER, server_id INTEGER, name TEXT, seq INTEGER)")
+            con.execute("INSERT INTO fav_tag_db_item VALUES(1, 10, '研究', 1)")
         with sqlite3.connect(self.root / "sns/sns.db") as con:
             con.execute("CREATE TABLE SnsTimeLine(tid INTEGER, user_name TEXT, content TEXT, pack_info_buf TEXT)")
             con.executemany("INSERT INTO SnsTimeLine VALUES(?,?,?,?)", [
                 (11, "person-a", "<TimelineObject><username>person-a</username><createTime>1700000200</createTime><contentDesc>朋友圈干货</contentDesc><isTop>1</isTop><location city='上海'><poiName>咖啡店</poiName></location></TimelineObject>", b"\\xff\\xfe"),
                 (12, "person-a", "<TimelineObject><username>person-a</username><createTime>1700000300</createTime><contentDesc>带链接</contentDesc><ContentObject><contentUrl>https://example.com/moment</contentUrl></ContentObject></TimelineObject>", b"\\xff\\xfe"),
             ])
+            con.execute("CREATE TABLE SnsMessage_tmp3(local_id INTEGER, create_time INTEGER, type INTEGER, feed_id TEXT, is_unread INTEGER, from_username TEXT, content TEXT)")
+            con.execute("INSERT INTO SnsMessage_tmp3 VALUES(1,1700000400,1,'11',1,'person-a','评论内容')")
+        with sqlite3.connect(self.root / "session/session.db") as con:
+            con.execute("CREATE TABLE SessionTable(username TEXT, unread_count INTEGER, is_hidden INTEGER, summary TEXT, draft TEXT, last_timestamp INTEGER, last_msg_locald_id INTEGER, last_msg_type INTEGER, last_msg_sub_type INTEGER, last_msg_sender TEXT, last_sender_display_name TEXT, last_msg_ext_type INTEGER)")
+            con.execute("INSERT INTO SessionTable VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", ("person-a", 3, 0, "最近消息", "草稿", 1700000500, 8, 1, 0, "person-a", "张三", 0))
+        with sqlite3.connect(self.root / "general/general.db") as con:
+            con.execute("CREATE TABLE transferTable(transfer_id TEXT, message_server_id INTEGER, pay_receiver TEXT)")
+            con.execute("INSERT INTO transferTable VALUES('t1',99,'person-a')")
 
     def source(self):
         return WeChatSource(self.root, "secondary")
@@ -566,6 +576,25 @@ class WeChatSecondaryResourceTests(unittest.TestCase):
         timeline = next(table for table in sns["tables"] if table["name"] == "SnsTimeLine")
         xml = next(column for column in timeline["xml_columns"] if column["column"] == "content")
         self.assertIn("isTop", xml["tags"])
+
+    def test_secondary_indexes_are_exposed(self):
+        source = self.source()
+        self.assertEqual(["研究"], [row["name"] for row in source.list_favorite_tags()])
+        self.assertEqual(3, source.list_sessions()[0]["unread_count"])
+        self.assertEqual("草稿", source.list_sessions()[0]["draft"])
+        self.assertEqual("评论内容", source.list_moment_interactions()[0]["content"])
+        self.assertEqual("transfer", source.list_special_events()[0]["event_type"])
+
+    def test_message_storage_columns_are_preserved(self):
+        table = "Msg_" + md5("gh_official".encode()).hexdigest()
+        with sqlite3.connect(self.root / "message/message_0.db") as con:
+            for column in ("sort_seq", "status", "upload_status", "download_status", "server_seq", "origin_source", "source", "packed_info_data", "WCDB_CT_source"):
+                con.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}"')
+            con.execute(f'UPDATE "{table}" SET sort_seq=7,status=2,download_status=3,server_seq=99,origin_source=4 WHERE local_id=1')
+        source = self.source()
+        row = source.read_items([source.conversation_id("gh_official")])["items"][0]
+        self.assertEqual(7, row["storage"]["sort_seq"])
+        self.assertEqual(99, row["storage"]["server_seq"])
 
     def test_cli_secondary_commands_and_export(self):
         out = io.StringIO()

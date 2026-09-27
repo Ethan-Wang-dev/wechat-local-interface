@@ -33,6 +33,8 @@ OPERATION_FIELDS: dict[str, frozenset[str]] = {
     "contacts.list": frozenset({"query", "kinds", "is_subscription", "is_friend", "limit"}),
     "conversations.list": frozenset({"query", "kinds", "has_messages"}),
     "official.list": frozenset({"query", "limit"}),
+    "contacts.labels": frozenset({"query", "limit"}),
+    "sessions.list": frozenset({"query", "unread_only", "limit"}),
     "groups.members": frozenset({"conversation_id", "query", "is_friend", "is_owner", "limit"}),
     "contacts.groups": frozenset({"actor_id", "query", "limit"}),
     "groups.common": frozenset({"actor_ids", "query", "limit"}),
@@ -43,9 +45,12 @@ OPERATION_FIELDS: dict[str, frozenset[str]] = {
     "favorites.list": frozenset(_COLLECTION_FILTERS),
     "favorites.search": frozenset(_COLLECTION_FILTERS),
     "favorites.export": frozenset(_COLLECTION_EXPORT_FILTERS | {"output", "previous"}),
+    "favorites.tags": frozenset({"query", "limit"}),
     "moments.list": frozenset(_COLLECTION_FILTERS),
     "moments.search": frozenset(_COLLECTION_FILTERS),
     "moments.export": frozenset(_COLLECTION_EXPORT_FILTERS | {"output", "previous"}),
+    "moments.interactions": frozenset({"feed_id", "author_usernames", "unread_only", "limit"}),
+    "events.list": frozenset({"kind", "limit"}),
     "search.all": frozenset({"query", "scopes", "start", "end", "limit"}),
 }
 
@@ -70,9 +75,10 @@ _BOOL_PARAMS = {
     "is_subscription", "is_friend", "is_owner", "has_messages", "has_links",
     "has_attachments", "official_only",
     "is_pinned", "is_private", "has_location",
+    "unread_only",
 }
 _STRING_PARAMS = {
-    "conversation_id", "actor_id", "object_id", "subject_id", "start",
+    "conversation_id", "actor_id", "object_id", "subject_id", "start", "feed_id", "kind",
     "end", "cursor", "output", "previous",
 }
 
@@ -191,6 +197,10 @@ class WeChatProtocol:
             return self.source.list_conversations(**params)
         if operation == "official.list":
             return self.source.list_official_accounts(**params)
+        if operation == "contacts.labels":
+            return self.source.list_contact_labels(**params)
+        if operation == "sessions.list":
+            return self.source.list_sessions(**params)
         if operation == "groups.members":
             conversation_id = params.pop("conversation_id")
             return self.source.list_group_members(conversation_id, **params)
@@ -221,6 +231,8 @@ class WeChatProtocol:
         if operation == "favorites.export":
             output = params.pop("output")
             return self.source.export_favorites(output, **params)
+        if operation == "favorites.tags":
+            return self.source.list_favorite_tags(**params)
         if operation == "moments.list":
             return self.source.list_moments(**params)
         if operation == "moments.search":
@@ -229,6 +241,10 @@ class WeChatProtocol:
         if operation == "moments.export":
             output = params.pop("output")
             return self.source.export_moments(output, **params)
+        if operation == "moments.interactions":
+            return self.source.list_moment_interactions(**params)
+        if operation == "events.list":
+            return self.source.list_special_events(**params)
         if operation == "search.all":
             query = params.pop("query")
             return self.source.search_all(query, **params)

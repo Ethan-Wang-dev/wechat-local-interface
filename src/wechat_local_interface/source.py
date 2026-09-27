@@ -49,6 +49,15 @@ _OPTIONAL_COLUMN_ALIASES = {
     "content": ("message_content", "content"),
     "compressed_content": ("compress_content",),
     "compression_flag": ("WCDB_CT_message_content",),
+    "sort_seq": ("sort_seq",),
+    "status": ("status",),
+    "upload_status": ("upload_status",),
+    "download_status": ("download_status",),
+    "server_seq": ("server_seq",),
+    "origin_source": ("origin_source",),
+    "source": ("source",),
+    "packed_info": ("packed_info_data",),
+    "source_compression_flag": ("WCDB_CT_source",),
 }
 _ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 _MAX_DECODED_BYTES = 4 * 1024 * 1024
@@ -57,6 +66,12 @@ _MAX_DECODED_BYTES = 4 * 1024 * 1024
 def _sha(value: bytes | str) -> str:
     data = value if isinstance(value, bytes) else value.encode("utf-8")
     return hashlib.sha256(data).hexdigest()
+
+
+def _metadata_value(value: Any) -> Any:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {"encoding": "binary", "size": len(value), "sha256": _sha(bytes(value))}
+    return value
 
 
 def _opaque(source_id: str, kind: str, value: str) -> str:
@@ -202,12 +217,17 @@ class WeChatSource:
         self.resource_db = self.message_dir / "message_resource.db"
         self.favorite_db = self.root / "favorite" / "favorite.db"
         self.sns_db = self.root / "sns" / "sns.db"
+        self.session_db = self.root / "session" / "session.db"
+        self.general_db = self.root / "general" / "general.db"
         try:
             self._validate_snapshot()
         except sqlite3.Error as exc:
             raise ValueError("snapshot 包含不可读的 SQLite 数据库，请提供已解密快照") from exc
         self._catalog_stamp = self._source_stamp()
         self.contacts, self.contact_ids = self._load_contacts()
+        self.contact_labels = self._load_contact_labels()
+        self.sessions = self._load_sessions()
+        self.business_info = self._load_business_info()
         self._group_relationships = self._load_group_relationships()
         self._name2id_by_db: dict[str, dict[int, str]] = {}
         self._conversation_has_messages: dict[str, bool] = {}
@@ -229,7 +249,7 @@ class WeChatSource:
             raise ValueError("缺少 contact/contact.db")
         if not self.message_dbs:
             raise ValueError("缺少 message/message_<数字>.db 或 biz_message_<数字>.db")
-        optional_dbs = [db for db in (self.resource_db, self.favorite_db, self.sns_db) if db.exists()]
+        optional_dbs = [db for db in (self.resource_db, self.favorite_db, self.sns_db, self.session_db, self.general_db) if db.exists()]
         for db in [self.contact_db, *self.message_dbs, *optional_dbs]:
             if not db.exists():
                 continue
@@ -260,7 +280,7 @@ class WeChatSource:
 
     @staticmethod
     def _check_no_links(root: Path) -> None:
-        for path in (root, root / "contact", root / "message", root / "favorite", root / "sns"):
+        for path in (root, root / "contact", root / "message", root / "favorite", root / "sns", root / "session", root / "general"):
             if path.exists() and path.is_symlink():
                 raise ValueError(f"不接受符号链接路径: {path}")
             if path.is_dir():
@@ -315,8 +335,52 @@ class WeChatSource:
                     "is_subscription": bool(subscription_value) or username.startswith("gh_"),
                     "local_type": self._optional_int(data.get("local_type")),
                     "delete_flag": self._optional_int(data.get("delete_flag")),
+                    "metadata": {
+                        key: _metadata_value(value) for key, value in data.items()
+                        if key not in {username_col, "id", "username", "userName", "extra_buffer"}
+                        and value not in (None, "", b"")
+                    } | {
+                        key: _metadata_value(value) for key, value in data.items()
+                        if key in {"extra_buffer"} and value not in (None, "", b"")
+                    },
                 }
         return contacts, ids
+
+    def _load_contact_labels(self) -> dict[str, dict]:
+        labels: dict[str, dict] = {}
+        with self._connect(self.contact_db) as con:
+            if self._table_exists(con, "contact_label"):
+                for row in con.execute("SELECT * FROM contact_label"):
+                    data = dict(row)
+                    label_id = str(data.get("label_id_") or data.get("label_id") or row[0])
+                    labels[label_id] = {key: _metadata_value(value) for key, value in data.items()}
+        return labels
+
+    def _load_sessions(self) -> dict[str, dict]:
+        sessions: dict[str, dict] = {}
+        if not self.session_db.exists():
+            return sessions
+        with self._connect(self.session_db) as con:
+            if not self._table_exists(con, "SessionTable"):
+                return sessions
+            for row in con.execute("SELECT * FROM SessionTable"):
+                data = dict(row)
+                username = str(data.get("username") or "")
+                if username:
+                    sessions[username] = {key: _metadata_value(value) for key, value in data.items()}
+        return sessions
+
+    def _load_business_info(self) -> dict[str, dict]:
+        values: dict[str, dict] = {}
+        with self._connect(self.contact_db) as con:
+            if not self._table_exists(con, "biz_info"):
+                return values
+            for row in con.execute("SELECT * FROM biz_info"):
+                data = dict(row)
+                username = str(data.get("username") or "")
+                if username:
+                    values[username] = {key: _metadata_value(value) for key, value in data.items()}
+        return values
 
     def _load_group_relationships(self) -> dict[str, dict]:
         """Load chat-room membership edges from contact.db when available.
@@ -389,6 +453,21 @@ class WeChatSource:
                     "membership_available": True,
                 }
         return relationships
+
+    def _group_details(self, username: str) -> dict | None:
+        with self._connect(self.contact_db) as con:
+            if not self._table_exists(con, "chat_room_info_detail"):
+                return None
+            columns = {row[1] for row in con.execute("PRAGMA table_info(chat_room_info_detail)")}
+            if "username_" not in columns:
+                return None
+            row = con.execute('SELECT * FROM "chat_room_info_detail" WHERE "username_"=? LIMIT 1', (username,)).fetchone()
+            if row is None:
+                return None
+            data = dict(row)
+            for key, value in list(data.items()):
+                data[key] = _metadata_value(value)
+            return data
 
     def _discover_conversations(self) -> list[str]:
         found: set[str] = set()
@@ -498,6 +577,8 @@ class WeChatSource:
                 "local_type": local_type,
                 "delete_flag": contact.get("delete_flag"),
             },
+            "metadata": contact.get("metadata", {}),
+            "business_info": self.business_info.get(username),
         }
 
     def status(self) -> dict:
@@ -511,13 +592,15 @@ class WeChatSource:
             "resource_index": self.resource_db.exists(),
             "favorite_index": self.favorite_db.exists(),
             "moments_index": self.sns_db.exists(),
+            "session_index": self.session_db.exists(),
+            "general_event_index": self.general_db.exists(),
             "group_membership_index": bool(self._group_relationships),
             "friendship_classification": any(c.get("local_type") in (1, 3, 5, 6) for c in self.contacts.values()),
             "decoders": {"utf8": True, "zstandard": zstd is not None},
             "snapshot_version": self._snapshot_token([], None, None),
             "capabilities": [
                 "contacts", "conversations", "messages", "search", "filters", "export",
-                "official_accounts", "favorites", "moments", "group_members", "relationships",
+                "official_accounts", "favorites", "favorite_tags", "moments", "moment_interactions", "group_members", "relationships", "contact_labels", "sessions", "special_events",
             ],
             "limitations": ["no_media_body_decode", "no_network", "no_knowledge_store_write"],
         }
@@ -556,6 +639,8 @@ class WeChatSource:
                 "owner_actor_id": self.actor_id(relationship["owner_username"])
                 if relationship and relationship.get("owner_username") else None,
                 "membership_source": "contact_db" if relationship and relationship.get("membership_available") else None,
+                "session": self.sessions.get(username),
+                "group_metadata": self._group_details(username),
             })
         if self._snapshot_token([], None, None) != snapshot:
             raise ValueError("读取期间 snapshot 已变化，请使用稳定的快照重试")
@@ -882,6 +967,44 @@ class WeChatSource:
         rows.sort(key=lambda row: (row["display_name"].casefold(), row["username"]))
         return rows[:limit]
 
+    def list_contact_labels(self, query: str | None = None, *, limit: int = 1000) -> list[dict]:
+        """Return contact labels from ``contact_label`` when available."""
+        q = query.casefold().strip() if query else ""
+        rows = []
+        for label in self.contact_labels.values():
+            name = str(label.get("label_name_") or label.get("label_name") or "")
+            if q and q not in name.casefold():
+                continue
+            rows.append({key: _metadata_value(value) for key, value in label.items()})
+        rows.sort(key=lambda row: str(row.get("label_name_") or row.get("label_name") or "").casefold())
+        return rows[:limit]
+
+    def list_sessions(self, query: str | None = None, *, unread_only: bool | None = None, limit: int = 1000) -> list[dict]:
+        """Return session metadata, unread counts, drafts and last-message summaries."""
+        q = query.casefold().strip() if query else ""
+        rows = []
+        for username, data in self.sessions.items():
+            if q and q not in username.casefold() and q not in self.display_name(username).casefold():
+                continue
+            unread = int(data.get("unread_count") or 0)
+            if unread_only is True and unread == 0:
+                continue
+            if unread_only is False and unread != 0:
+                continue
+            rows.append({
+                "conversation_id": self.conversation_id(username),
+                "username": username,
+                "display_name": self.display_name(username),
+                "unread_count": unread,
+                "is_hidden": bool(data.get("is_hidden")),
+                "summary": _metadata_value(data.get("summary")),
+                "draft": _metadata_value(data.get("draft")),
+                "last_message": {key: _metadata_value(data.get(key)) for key in ("last_timestamp", "last_msg_locald_id", "last_msg_type", "last_msg_sub_type", "last_msg_sender", "last_sender_display_name", "last_msg_ext_type") if data.get(key) is not None},
+                "metadata": {key: _metadata_value(value) for key, value in data.items()},
+            })
+        rows.sort(key=lambda row: str(row["last_message"].get("last_timestamp") or ""), reverse=True)
+        return rows[:limit]
+
     def list_favorites(
         self,
         query: str | None = None,
@@ -918,6 +1041,21 @@ class WeChatSource:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query 不能为空")
         return self.list_favorites(query=query, **filters)
+
+    def list_favorite_tags(self, query: str | None = None, *, limit: int = 1000) -> list[dict]:
+        self._require_optional_db(self.favorite_db, "favorite/favorite.db")
+        q = query.casefold().strip() if query else ""
+        with self._connect(self.favorite_db) as con:
+            if not self._table_exists(con, "fav_tag_db_item"):
+                return []
+            rows = []
+            for row in con.execute("SELECT * FROM fav_tag_db_item"):
+                data = {key: _metadata_value(value) for key, value in dict(row).items()}
+                name = str(data.get("name") or "")
+                if q and q not in name.casefold():
+                    continue
+                rows.append(data)
+            return rows[:limit]
 
     def list_moments(
         self,
@@ -961,6 +1099,44 @@ class WeChatSource:
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query 不能为空")
         return self.list_moments(query=query, **filters)
+
+    def list_moment_interactions(self, *, feed_id: str | None = None, author_usernames: list[str] | None = None, unread_only: bool | None = None, limit: int = 1000) -> list[dict]:
+        """List local comments/replies/interaction notifications for moments."""
+        self._require_optional_db(self.sns_db, "sns/sns.db")
+        allowed = set(author_usernames or [])
+        with self._connect(self.sns_db) as con:
+            if not self._table_exists(con, "SnsMessage_tmp3"):
+                return []
+            rows = []
+            for row in con.execute("SELECT * FROM SnsMessage_tmp3 ORDER BY create_time DESC"):
+                data = {key: _metadata_value(value) for key, value in dict(row).items()}
+                if feed_id and str(data.get("feed_id") or "") != str(feed_id):
+                    continue
+                if allowed and data.get("from_username") not in allowed:
+                    continue
+                if unread_only is not None and bool(data.get("is_unread")) is not unread_only:
+                    continue
+                data["resource_type"] = "moment_interaction"
+                data["author_id"] = self.actor_id(data["from_username"]) if data.get("from_username") else None
+                rows.append(data)
+                if len(rows) >= limit:
+                    break
+            return rows
+
+    def list_special_events(self, kind: str | None = None, *, limit: int = 1000) -> list[dict]:
+        """Expose structured non-chat events stored in ``general.db``."""
+        if not self.general_db.exists():
+            return []
+        tables = {"red_envelope": "redEnvelopeTable", "transfer": "transferTable", "friend_request": "FMessageTable", "revoked_message": "revokemessage"}
+        selected = {kind: tables[kind]} if kind else tables
+        rows = []
+        with self._connect(self.general_db) as con:
+            for event_kind, table in selected.items():
+                if not self._table_exists(con, table):
+                    continue
+                for row in con.execute(f'SELECT * FROM "{table}" ORDER BY rowid DESC LIMIT ?', (limit,)):
+                    rows.append({"resource_type": "special_event", "event_type": event_kind, "metadata": {key: _metadata_value(value) for key, value in dict(row).items()}})
+        return rows[:limit]
 
     def search_all(self, query: str, *, scopes: list[str] | None = None, start: str | None = None, end: str | None = None, limit: int = 100) -> dict:
         """Search messages, favorites, and moments using one stable envelope."""
@@ -1754,7 +1930,7 @@ class WeChatSource:
         # connector whose contact and sender catalogs were already loaded.
         paths = sorted(p for p in self.message_dir.iterdir() if _TABLE_RE.fullmatch(p.name))
         source_paths = [*paths, self.contact_db]
-        for optional_db in (self.resource_db, self.favorite_db, self.sns_db):
+        for optional_db in (self.resource_db, self.favorite_db, self.sns_db, self.session_db, self.general_db):
             if optional_db.exists():
                 source_paths.append(optional_db)
         parts = []
@@ -1784,6 +1960,9 @@ class WeChatSource:
                     aliases = self._aliases(cols)
                     select = [f'"{aliases["local_id"]}" AS local_id', f'"{aliases["server_id"]}" AS server_id', f'"{aliases["local_type"]}" AS local_type', f'"{aliases["create_time"]}" AS create_time']
                     for key in ("sender_id", "content", "compressed_content", "compression_flag"):
+                        column = aliases.get(key)
+                        select.append(f'"{column}" AS "{key}"' if column else f'NULL AS "{key}"')
+                    for key in ("sort_seq", "status", "upload_status", "download_status", "server_seq", "origin_source", "source", "packed_info", "source_compression_flag"):
                         column = aliases.get(key)
                         select.append(f'"{column}" AS "{key}"' if column else f'NULL AS "{key}"')
                     clauses: list[str] = []
@@ -1880,10 +2059,13 @@ class WeChatSource:
             "attachments": attachments,
             "relations": relations,
             "metadata": _xml_metadata(structured_root) if structured_root is not None else {},
+            "storage": {
+                key: _metadata_value(row[key]) for key in ("sort_seq", "status", "upload_status", "download_status", "server_seq", "origin_source", "source", "packed_info", "source_compression_flag") if row[key] not in (None, "", b"")
+            },
             "quality": {"status": quality_status, "reason": decode_error},
             "provenance": provenance,
         }
-        normalized["revision"] = _sha(json.dumps({key: normalized[key] for key in ("conversation_id", "author_id", "direction", "kind", "created_at", "text", "title", "links", "attachments", "relations", "metadata", "quality")}, ensure_ascii=False, sort_keys=True))
+        normalized["revision"] = _sha(json.dumps({key: normalized[key] for key in ("conversation_id", "author_id", "direction", "kind", "created_at", "text", "title", "links", "attachments", "relations", "metadata", "storage", "quality")}, ensure_ascii=False, sort_keys=True))
         return normalized
 
     def _direction(self, sender_username: str | None, conversation_username: str) -> str:
@@ -1965,11 +2147,12 @@ class WeChatSource:
                     return []
                 result = []
                 for info in infos:
-                    for row in con.execute("SELECT size, packed_info FROM MessageResourceDetail WHERE message_id=?", (info[0],)):
-                        packed = row[1]
+                    for row in con.execute("SELECT * FROM MessageResourceDetail WHERE message_id=?", (info[0],)):
+                        detail = dict(row)
+                        packed = detail.get("packed_info")
                         decoded = packed.decode("utf-8", "ignore") if isinstance(packed, bytes) else str(packed or "")
                         names = re.findall(r"(?:[A-Za-z0-9_ .\-()\u4e00-\u9fff]+\.(?:zip|pdf|docx?|xlsx?|pptx?|txt|jpg|png|mp3|mp4|m4a))", decoded, flags=re.I)
-                        result.append({"kind": "file", "name": names[-1] if names else None, "size_bytes": int(row[0] or 0) or None, "availability": "metadata_only"})
+                        result.append({"kind": "file", "name": names[-1] if names else None, "size_bytes": int(detail.get("size") or 0) or None, "availability": "metadata_only", "resource_metadata": {key: _metadata_value(value) for key, value in detail.items() if key != "packed_info"}})
                 return result
         except (sqlite3.Error, ValueError, OSError):
             return []

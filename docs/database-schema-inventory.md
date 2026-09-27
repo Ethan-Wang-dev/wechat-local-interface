@@ -23,6 +23,7 @@ UTF-8 时会跳过值，只保留结构信息。
 | `favorite/favorite.db` | `fav_db_item` | `favorites` | 收藏类型、来源、更新时间和 XML 内容 |
 | `sns/sns.db` | `SnsTimeLine`、`SnsTopItem_1`、`SnsMessage_tmp3` | `moments` | 朋友圈正文、媒体、互动和置顶标记 |
 | `session/session.db` | `SessionTable` | 会话目录辅助信息 | 未把它误当作消息正文 |
+| `general/general.db` | `redEnvelopeTable`、`transferTable`、`FMessageTable`、`revokemessage` | `events.list` | 红包、转账、好友申请和撤回消息等特殊事件 |
 | `hardlink/hardlink.db`、`head_image/head_image.db` | 文件、图片、视频和头像索引 | 元数据辅助 | 只读索引，不下载或解密媒体正文 |
 
 ## XML 字段策略
@@ -45,6 +46,10 @@ UTF-8 时会跳过值，只保留结构信息。
   `location`、`post_type`、`attachments[].metadata`；
 - 收藏：`kind`、`source_chat`、`metadata`、`attachments[].metadata`；
 - 消息：`kind`、`relations`、`metadata`，并保留文件资源索引中的附件字段。
+- 联系人：`metadata` 保留头像、拼音、验证状态、群内状态等列；`contacts.labels`
+  提供联系人标签；`sessions.list` 提供未读数、草稿和最后消息状态。
+- 收藏标签：`favorites.tags`；朋友圈互动：`moments.interactions`；特殊事件：
+  `events.list`。
 
 `visibility.policy` 在本地数据库没有明确的“3 天/1 个月/半年/全部”
 枚举时返回 `unknown`，不会根据时间范围猜测。`SnsTopItem_1` 是本地顶层

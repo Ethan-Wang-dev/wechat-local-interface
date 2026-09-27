@@ -970,3 +970,17 @@ wechat-local-interface --snapshot DIR --source-id ID favorites|moments \
 3. 不依赖数据库内部表名作为公共 API；
 4. 使用 `resource_type` 区分消息、收藏和朋友圈；
 5. 使用 `revision` 和 manifest 计数做导出更新判断。
+
+## 4.20 扩展数据索引
+
+除消息、收藏和朋友圈正文外，连接器还提供以下只读索引：
+
+- `contacts.labels`：联系人标签；
+- `sessions.list`：会话未读数、隐藏状态、草稿、摘要和最后消息；
+- `favorites.tags`：收藏标签；
+- `moments.interactions`：朋友圈评论、回复和互动通知；
+- `events.list`：红包、转账、好友申请、撤回消息等特殊事件。
+
+联系人记录的 `metadata` 包含头像、拼音、验证状态、群内状态等原始列；群会话
+包含 `group_metadata`；消息记录包含 `storage`，用于查询 SQLite 中的排序、投递
+和来源状态。二进制扩展字段只返回大小和 SHA-256，不返回原始二进制内容。

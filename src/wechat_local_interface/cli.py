@@ -51,6 +51,24 @@ def parser() -> argparse.ArgumentParser:
     official = sub.add_parser("official", help="列出公众号联系人和对应会话")
     official.add_argument("--query")
     official.add_argument("--limit", type=int, default=1000)
+    labels = sub.add_parser("labels", help="列出联系人标签")
+    labels.add_argument("--query")
+    labels.add_argument("--limit", type=int, default=1000)
+    sessions = sub.add_parser("sessions", help="列出会话状态")
+    sessions.add_argument("--query")
+    sessions.add_argument("--unread-only", action=argparse.BooleanOptionalAction)
+    sessions.add_argument("--limit", type=int, default=1000)
+    tags = sub.add_parser("favorite-tags", help="列出收藏标签")
+    tags.add_argument("--query")
+    tags.add_argument("--limit", type=int, default=1000)
+    interactions = sub.add_parser("moment-interactions", help="列出朋友圈互动")
+    interactions.add_argument("--feed-id")
+    interactions.add_argument("--author", action="append")
+    interactions.add_argument("--unread-only", action=argparse.BooleanOptionalAction)
+    interactions.add_argument("--limit", type=int, default=1000)
+    events = sub.add_parser("events", help="列出红包、转账等特殊事件")
+    events.add_argument("--kind", choices=["red_envelope", "transfer", "friend_request", "revoked_message"])
+    events.add_argument("--limit", type=int, default=1000)
 
     search = sub.add_parser("search", help="搜索消息、收藏夹或朋友圈")
     search.add_argument("query")
@@ -168,6 +186,16 @@ def main(argv: list[str] | None = None) -> int:
             output(source.list_contacts(args.query, kinds=args.kind, is_subscription=args.subscription, is_friend=args.friend, limit=args.limit))
         elif args.command == "official":
             output(source.list_official_accounts(args.query, limit=args.limit))
+        elif args.command == "labels":
+            output(source.list_contact_labels(args.query, limit=args.limit))
+        elif args.command == "sessions":
+            output(source.list_sessions(args.query, unread_only=args.unread_only, limit=args.limit))
+        elif args.command == "favorite-tags":
+            output(source.list_favorite_tags(args.query, limit=args.limit))
+        elif args.command == "moment-interactions":
+            output(source.list_moment_interactions(feed_id=args.feed_id, author_usernames=args.author, unread_only=args.unread_only, limit=args.limit))
+        elif args.command == "events":
+            output(source.list_special_events(args.kind, limit=args.limit))
         elif args.command == "search":
             if args.scope == "messages":
                 filters = _filters(args, include_query=False)
