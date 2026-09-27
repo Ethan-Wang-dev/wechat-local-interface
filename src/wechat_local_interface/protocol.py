@@ -14,7 +14,7 @@ from typing import Any, Iterable
 from .source import SCHEMA_VERSION, WeChatSource
 
 
-PROTOCOL_VERSION = "mousia.wechat.protocol.v1"
+PROTOCOL_VERSION = "wechat.local.protocol.v1"
 
 _COMMON_MESSAGE_FILTERS = {
     "start", "end", "author_usernames", "author_ids", "kinds", "directions",

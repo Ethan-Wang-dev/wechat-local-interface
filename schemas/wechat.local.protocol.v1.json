@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mousia.dev/schemas/wechat/protocol/v1.json",
-  "title": "Mousia WeChat Local Interface Protocol v1",
+  "$id": "https://raw.githubusercontent.com/Ethan-Wang-dev/wechat-local-interface/main/schemas/wechat.local.protocol.v1.json",
+  "title": "WeChat Local Interface Protocol v1",
   "description": "Language-neutral request and response envelopes for a read-only local WeChat source.",
   "$defs": {
     "requestId": {
@@ -27,7 +27,7 @@
       "additionalProperties": false,
       "required": ["protocol_version", "request_id", "operation", "params"],
       "properties": {
-        "protocol_version": {"const": "mousia.wechat.protocol.v1"},
+        "protocol_version": {"const": "wechat.local.protocol.v1"},
         "request_id": {"$ref": "#/$defs/requestId"},
         "source_id": {"$ref": "#/$defs/sourceId"},
         "operation": {
@@ -84,8 +84,8 @@
       "additionalProperties": false,
       "required": ["protocol_version", "schema_version", "request_id", "source_id", "operation", "snapshot"],
       "properties": {
-        "protocol_version": {"const": "mousia.wechat.protocol.v1"},
-        "schema_version": {"const": "mousia.wechat.v0"},
+        "protocol_version": {"const": "wechat.local.protocol.v1"},
+        "schema_version": {"const": "wechat.local.v0"},
         "request_id": {"type": ["string", "null"]},
         "source_id": {"$ref": "#/$defs/sourceId"},
         "operation": {"type": ["string", "null"]},

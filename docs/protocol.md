@@ -1,18 +1,18 @@
 # 语言无关接口协议
 
-版本：`mousia.wechat.protocol.v1`
+版本：`wechat.local.protocol.v1`
 
 Python `WeChatSource` 是一个本地实现；跨语言集成应使用本协议。协议只使用 UTF-8 JSON，不暴露 SQLite 类型、Python 类型或内部表名。TypeScript、Go、Rust、Swift、Java 和其他语言都可以按同一份请求/响应定义接入。
 
 机器可读定义：
 
-- [`schemas/mousia.wechat.protocol.v1.json`](../schemas/mousia.wechat.protocol.v1.json)：请求/响应信封、错误和通用字段；
-- [`schemas/mousia.wechat.operations.v1.json`](../schemas/mousia.wechat.operations.v1.json)：全部操作的参数定义和结果类别。
-- [`schemas/mousia.wechat.records.v0.json`](../schemas/mousia.wechat.records.v0.json)：actor、conversation、member、relationship、message、favorite、moment、分页和导出 manifest 的字段定义。
+- [`schemas/wechat.local.protocol.v1.json`](../schemas/wechat.local.protocol.v1.json)：请求/响应信封、错误和通用字段；
+- [`schemas/wechat.local.operations.v1.json`](../schemas/wechat.local.operations.v1.json)：全部操作的参数定义和结果类别。
+- [`schemas/wechat.local.records.v0.json`](../schemas/wechat.local.records.v0.json)：actor、conversation、member、relationship、message、favorite、moment、分页和导出 manifest 的字段定义。
 
 ## 1. 传输方式
 
-当前实现提供 stdin/stdout 的 NDJSON（newline-delimited JSON）通道：一行请求对应一行响应。它适合 Mousia 启动一个本地子进程，也适合未来封装为 HTTP、Unix domain socket 或 MCP adapter。
+当前实现提供 stdin/stdout 的 NDJSON（newline-delimited JSON）通道：一行请求对应一行响应。它适合任何本地应用启动一个子进程，也适合未来封装为 HTTP、Unix domain socket 或 MCP adapter。
 
 ```bash
 wechat-local-interface \
@@ -36,7 +36,7 @@ wechat-local-interface \
 
 ```json
 {
-  "protocol_version": "mousia.wechat.protocol.v1",
+  "protocol_version": "wechat.local.protocol.v1",
   "request_id": "req-0001",
   "source_id": "my-wechat",
   "operation": "groups.members",
@@ -50,7 +50,7 @@ wechat-local-interface \
 
 | 字段 | 类型 | 规范 |
 |---|---|---|
-| `protocol_version` | string | 必须是 `mousia.wechat.protocol.v1`。 |
+| `protocol_version` | string | 必须是 `wechat.local.protocol.v1`。 |
 | `request_id` | string | 调用方生成的 1–128 字符 ID；响应原样返回，用于并发和日志关联。 |
 | `source_id` | string | 可选；提供时必须与启动连接器的来源 ID 相同。 |
 | `operation` | string | 使用操作目录中的稳定名称，例如 `messages.search`。 |
@@ -66,13 +66,13 @@ wechat-local-interface \
 {
   "ok": true,
   "data": {
-    "schema_version": "mousia.wechat.v0",
+    "schema_version": "wechat.local.v0",
     "source_id": "my-wechat",
     "members": []
   },
   "meta": {
-    "protocol_version": "mousia.wechat.protocol.v1",
-    "schema_version": "mousia.wechat.v0",
+    "protocol_version": "wechat.local.protocol.v1",
+    "schema_version": "wechat.local.v0",
     "request_id": "req-0001",
     "source_id": "my-wechat",
     "operation": "groups.members",
@@ -92,8 +92,8 @@ wechat-local-interface \
     "details": {}
   },
   "meta": {
-    "protocol_version": "mousia.wechat.protocol.v1",
-    "schema_version": "mousia.wechat.v0",
+    "protocol_version": "wechat.local.protocol.v1",
+    "schema_version": "wechat.local.v0",
     "request_id": "req-0001",
     "source_id": "my-wechat",
     "operation": null,
@@ -137,7 +137,7 @@ wechat-local-interface \
 | `moments.list/search/export` | 朋友圈读取、搜索、导出 | collection page/manifest |
 | `search.all` | 跨消息、收藏夹、朋友圈搜索 | unified search |
 
-操作的完整参数在 `schemas/mousia.wechat.operations.v1.json` 中。参数命名使用 snake_case，避免绑定任何语言的命名风格；语言 SDK 可以在本地转换成 camelCase 或 idiomatic names，但在线路上必须使用协议字段名。
+操作的完整参数在 `schemas/wechat.local.operations.v1.json` 中。参数命名使用 snake_case，避免绑定任何语言的命名风格；语言 SDK 可以在本地转换成 camelCase 或 idiomatic names，但在线路上必须使用协议字段名。
 
 ## 5. 下游对象模型
 
@@ -154,7 +154,7 @@ wechat-local-interface \
 ## 6. 版本和兼容
 
 - `protocol_version` 控制请求/响应信封和操作目录；发生不兼容变化时递增主版本。
-- `schema_version`（当前 `mousia.wechat.v0`）控制业务记录字段；新增字段保持向后兼容。
+- `schema_version`（当前 `wechat.local.v0`）控制业务记录字段；新增字段保持向后兼容。
 - 客户端必须忽略未知响应字段，检查 `schema_version`，并把 `request_id` 与结果关联。
 - 分页 `next_cursor` 是不透明字符串，只能原样传回同一个操作和筛选范围。
 - 导出路径是本机进程路径，不应由远端客户端假定跨平台可访问；跨进程集成通常先导出到约定的本地目录，再读取返回的 manifest。

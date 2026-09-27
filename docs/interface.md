@@ -1,7 +1,7 @@
 # WeChat Local Interface 接口规范
 
 版本：`v0`
-数据契约：`mousia.wechat.v0`
+数据契约：`wechat.local.v0`
 Python 包：`wechat_local_interface`
 CLI：`wechat-local-interface`
 
@@ -185,7 +185,7 @@ status() -> dict
 
 ```json
 {
-  "schema_version": "mousia.wechat.v0",
+  "schema_version": "wechat.local.v0",
   "source_id": "my-wechat",
   "snapshot": "/path/to/decrypted/current",
   "source_kind": "wechat_mac_decrypted_vault",
@@ -408,7 +408,7 @@ read_items(
 
 ```json
 {
-  "schema_version": "mousia.wechat.v0",
+  "schema_version": "wechat.local.v0",
   "source_id": "my-wechat",
   "snapshot": "<查询范围的快照令牌>",
   "items": [],
@@ -557,7 +557,7 @@ search_all(
 
 ```json
 {
-  "schema_version": "mousia.wechat.v0",
+  "schema_version": "wechat.local.v0",
   "source_id": "my-wechat",
   "query": "项目",
   "items": [],
@@ -659,7 +659,7 @@ export/
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `schema_version` | string | 当前为 `mousia.wechat.v0`。 |
+| `schema_version` | string | 当前为 `wechat.local.v0`。 |
 | `resource_type` | string | `message`、`favorite` 或 `moment`。 |
 | `id` | string | 来源隔离的稳定 ID。 |
 | `source_id` | string | 构造连接器时传入的来源 ID。 |
@@ -790,7 +790,7 @@ export/
 
 ```json
 {
-  "schema_version": "mousia.wechat.v0",
+  "schema_version": "wechat.local.v0",
   "source_id": "my-wechat",
   "source_kind": "wechat_mac_decrypted_vault",
   "resource_type": "favorites",
@@ -836,7 +836,7 @@ wechat-local-interface --snapshot DIR --source-id ID status
 wechat-local-interface --snapshot DIR --source-id ID rpc [--file REQUESTS.ndjson]
 ```
 
-从 `--file` 或 stdin 逐行读取 `mousia.wechat.protocol.v1` 请求，并逐行输出协议响应。请求、错误码和所有操作定义见 [`docs/protocol.md`](protocol.md)。
+从 `--file` 或 stdin 逐行读取 `wechat.local.protocol.v1` 请求，并逐行输出协议响应。请求、错误码和所有操作定义见 [`docs/protocol.md`](protocol.md)。
 
 ### `contacts`
 
@@ -950,7 +950,7 @@ wechat-local-interface --snapshot DIR --source-id ID favorites|moments \
 
 ## 10. 版本兼容
 
-`SCHEMA_VERSION` 当前为 `mousia.wechat.v0`。下游程序应：
+`SCHEMA_VERSION` 当前为 `wechat.local.v0`。下游程序应：
 
 1. 检查 `schema_version`；
 2. 对未知字段保持兼容；

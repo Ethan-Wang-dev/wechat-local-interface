@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="docs/assets/wechat-local-interface-hero.svg" alt="WeChat Local Interface" width="100%" />
+  <img src="docs/assets/wechat-local-interface-hero.svg" alt="微信本地数据接口封面" width="100%" />
 
-  <p><strong>面向 Mousia 的本地微信数据平面</strong></p>
+  <p><strong>通用的本地微信数据接口</strong></p>
   <p>把已解密的微信 SQLite 快照，转换成可检索、可导出、可跨语言接入的标准化对象。</p>
 
   <p>
@@ -33,10 +33,10 @@
 ## 架构
 
 <p align="center">
-  <img src="docs/assets/wechat-local-interface-architecture.svg" alt="WeChat Local Interface architecture" width="100%" />
+  <img src="docs/assets/wechat-local-interface-architecture.svg" alt="微信本地数据接口架构" width="100%" />
 </p>
 
-Python 是当前实现语言，但不是集成边界。Mousia、TypeScript、Go、Rust、Swift 或其他程序都可以通过相同的 JSON 协议接入。
+Python 是当前实现语言，但不是集成边界。TypeScript、Go、Rust、Swift 或其他程序都可以通过相同的 JSON 协议接入。
 
 ## 能力地图
 
@@ -124,7 +124,7 @@ wechat-local-interface --snapshot ./wechat-snapshot --source-id my-wechat search
 
 ## 语言无关协议
 
-Mousia 或其他非 Python 程序使用 JSON/NDJSON 通道，不需要导入 Python 包：
+其他非 Python 程序使用 JSON/NDJSON 通道，不需要导入 Python 包：
 
 ```bash
 wechat-local-interface \
@@ -139,7 +139,7 @@ wechat-local-interface \
 
 ```json
 {
-  "protocol_version": "mousia.wechat.protocol.v1",
+  "protocol_version": "wechat.local.protocol.v1",
   "request_id": "req-0001",
   "operation": "groups.members",
   "params": {
@@ -152,9 +152,9 @@ wechat-local-interface \
 
 机器可读契约和错误码见 [`docs/protocol.md`](docs/protocol.md)：
 
-- [`mousia.wechat.protocol.v1.json`](schemas/mousia.wechat.protocol.v1.json)：请求/响应信封；
-- [`mousia.wechat.operations.v1.json`](schemas/mousia.wechat.operations.v1.json)：全部操作及参数；
-- [`mousia.wechat.records.v0.json`](schemas/mousia.wechat.records.v0.json)：actor、conversation、message、relationship 等记录。
+- [`wechat.local.protocol.v1.json`](schemas/wechat.local.protocol.v1.json)：请求/响应信封；
+- [`wechat.local.operations.v1.json`](schemas/wechat.local.operations.v1.json)：全部操作及参数；
+- [`wechat.local.records.v0.json`](schemas/wechat.local.records.v0.json)：actor、conversation、message、relationship 等记录。
 
 ## Python API
 

@@ -294,7 +294,7 @@ class WeChatSourceTests(unittest.TestCase):
             self.source()
 
     def test_cli_never_initializes_the_knowledge_store(self):
-        home = self.base / 'mousia-home'
+        home = self.base / 'wechat-local-home'
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             code = main(['--snapshot', str(self.root), '--source-id', 'test-account', 'conversations'])
@@ -453,7 +453,7 @@ class WeChatRelationshipTests(unittest.TestCase):
         })
         self.assertEqual("invalid_argument", bad_type["error"]["code"])
         self.assertEqual("invalid_json", json.loads(protocol.handle_line("{bad"))["error"]["code"])
-        catalog = json.loads((Path(__file__).parents[1] / "schemas/mousia.wechat.operations.v1.json").read_text())
+        catalog = json.loads((Path(__file__).parents[1] / "schemas/wechat.local.operations.v1.json").read_text())
         self.assertEqual(set(OPERATION_FIELDS), {item["name"] for item in catalog["operations"]})
 
     def test_cli_rpc_ndjson(self):

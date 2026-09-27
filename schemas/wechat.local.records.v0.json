@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mousia.dev/schemas/wechat/records/v0.json",
-  "title": "Mousia WeChat Local Interface records v0",
+  "$id": "https://raw.githubusercontent.com/Ethan-Wang-dev/wechat-local-interface/main/schemas/wechat.local.records.v0.json",
+  "title": "WeChat Local Interface records v0",
   "description": "Language-neutral data record definitions returned in protocol data fields and JSONL exports.",
   "$defs": {
     "id": {"type": ["string", "null"]},
@@ -75,7 +75,7 @@
       "additionalProperties": true,
       "required": ["schema_version", "source_id", "conversation", "owner", "member_count", "total_in_scope", "members", "membership_source", "complete", "friend_counts"],
       "properties": {
-        "schema_version": {"const": "mousia.wechat.v0"},
+        "schema_version": {"const": "wechat.local.v0"},
         "source_id": {"type": "string"},
         "conversation": {"$ref": "#/$defs/conversation"},
         "owner": {"anyOf": [{"$ref": "#/$defs/actor"}, {"type": "null"}]},
@@ -118,7 +118,7 @@
       "additionalProperties": true,
       "required": ["schema_version", "resource_type", "id", "source_id", "author_id", "author_username", "created_at", "kind", "text", "title", "links", "attachments", "quality", "provenance", "revision"],
       "properties": {
-        "schema_version": {"const": "mousia.wechat.v0"},
+        "schema_version": {"const": "wechat.local.v0"},
         "resource_type": {"enum": ["message", "favorite", "moment"]},
         "id": {"type": "string"},
         "source_id": {"type": "string"},
@@ -148,7 +148,7 @@
       "additionalProperties": true,
       "required": ["schema_version", "source_id", "items", "next_cursor", "total_in_scope"],
       "properties": {
-        "schema_version": {"const": "mousia.wechat.v0"},
+        "schema_version": {"const": "wechat.local.v0"},
         "source_id": {"type": "string"},
         "items": {"type": "array", "items": {}},
         "next_cursor": {"$ref": "#/$defs/stringOrNull"},
@@ -160,7 +160,7 @@
       "additionalProperties": true,
       "required": ["schema_version", "source_id", "source_kind", "privacy", "snapshot", "filters", "counts"],
       "properties": {
-        "schema_version": {"const": "mousia.wechat.v0"},
+        "schema_version": {"const": "wechat.local.v0"},
         "source_id": {"type": "string"},
         "source_kind": {"const": "wechat_mac_decrypted_vault"},
         "privacy": {"type": "object", "additionalProperties": true},

@@ -1,7 +1,7 @@
 """Read-only adapter from an already-decrypted Mac WeChat vault.
 
-This module deliberately knows nothing about decryption, Mousia's knowledge
-store, model providers, or network services.  It turns a stable subset of the
+This module deliberately knows nothing about decryption, downstream knowledge
+stores, model providers, or network services.  It turns a stable subset of the
 local SQLite schema into a portable, source-scoped JSONL bundle.
 """
 
@@ -26,7 +26,7 @@ except ImportError:
     zstd = None
 
 
-SCHEMA_VERSION = "mousia.wechat.v0"
+SCHEMA_VERSION = "wechat.local.v0"
 _SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _TABLE_RE = re.compile(r"^(?:message|biz_message)_\d+\.db$")
 _MSG_TABLE_RE = re.compile(r"^Msg_[0-9a-fA-F]{32}$")
