@@ -7,6 +7,12 @@ CLI：`wechat-local-interface`
 
 本文档描述当前代码实际提供的 Python API、CLI、返回结构、过滤规则、分页游标、导出包和错误行为。它不描述解密过程；解密由用户选择的外部工具完成。
 
+## 0. 解密前置工具
+
+本接口不提取密钥，也不解密微信数据库。需要准备明文快照时，可以使用外部的 [`yichen-wechat-local-vault` Skill](https://github.com/mcncarl/yichen-skills/tree/main/yichen-wechat-local-vault)，该 Skill 面向 Mac 微信本地数据库提供密钥提取、全量解密和增量刷新能力。
+
+两个项目保持独立：本仓库只读取已经解密的快照，不复制、调用或重新实现该 Skill 的解密代码。使用该 Skill 前应阅读其仓库说明，遵守它的许可证、使用限制以及适用的法律和平台规则。
+
 ## 1. 工作流和快照要求
 
 标准使用流程如下：

@@ -4,6 +4,12 @@ WeChat Local Interface 是一个面向 macOS 微信明文数据库的本地、�
 
 这个项目只做数据读取和标准化：不负责解密，不连接微信进程，不调用网络或模型，也不把数据写入知识库。
 
+## 获取已解密快照
+
+本项目需要一个已经解密的微信数据库快照。可以使用外部的 [`yichen-wechat-local-vault` Skill](https://github.com/mcncarl/yichen-skills/tree/main/yichen-wechat-local-vault) 完成 Mac 微信数据库的密钥提取、全量解密和增量刷新，再把生成的稳定快照目录传给本项目的 `--snapshot` 参数。
+
+该 Skill 与本项目是两个独立项目：本项目不复制、调用或重新实现它的解密代码。使用时请同时遵守该 Skill 自身的许可证、使用说明以及适用的法律和平台规则。
+
 ## 能读取什么
 
 | 数据 | 数据库 | 能力 |
