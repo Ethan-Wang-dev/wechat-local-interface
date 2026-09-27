@@ -31,7 +31,3 @@ Skill 可以直接给用户最终结果，也可以生成 [`wechat.content.v1`](
 ## 当前目录
 
 `_template/` 是提交模板。新的 Skill 放在这里后，Gallery 会逐步补充示例、预览和自动检查。
-
-## 已收录 Skill
-
-- [`reply-coach`](./reply-coach/)：根据当前消息、历史对话和关系语境生成多风格回复建议；只读本地接口，不自动发送。
