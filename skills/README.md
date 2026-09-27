@@ -15,8 +15,16 @@
 - 它会生成什么结果或文件；
 - 是否需要模型、网络或额外依赖；
 - 一个不包含真实隐私数据的示例。
+- 如果读取微信数据，必须声明并执行刷新前置步骤；离线快照需要声明跳过原因。
 
 可选的 `skill.yaml` 用于声明这些能力，字段规范见 [`docs/skill-architecture.md`](../docs/skill-architecture.md)。能力清单用于发现和提示，不限制 Skill 的实现方式。
+
+### 统一刷新规则
+
+所有读取 `local_wechat_interface` 的 Skill 默认都要先执行一次 Mac 增量解密，确认
+快照稳定后再查询。新 Skill 的 `skill.yaml` 应包含 `refresh_before_read: true`，
+`SKILL.md` 应说明刷新命令、失败处理和快照版本记录方式。只处理既有产物的渲染
+Skill 可以设置为 `false`。
 
 ## 组合方式
 

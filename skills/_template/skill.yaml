@@ -5,6 +5,7 @@ triggers:
   - 用户可能怎样提出请求
 reads:
   - local_wechat_interface
+refresh_before_read: true
 writes:
   - local_files
 outputs:

@@ -18,6 +18,21 @@
 连接器只读 SQLite，拒绝符号链接和活动 `-wal/-shm/-journal` sidecar；它不提取
 密钥、不解密、不连接微信、不访问 URL、不写知识库，也不读取媒体正文。
 
+## 一点五、Skill 读取前刷新
+
+任何依赖微信本地数据的上层 Skill 都必须在上述连接器生命周期之前先执行一次
+增量刷新：
+
+```bash
+python3 {{YICHEN_SKILL_DIR}}/scripts/decrypt_all_dbs.py --mode incremental
+```
+
+刷新完成后重新确认快照稳定，再创建 `WeChatSource` 或启动 RPC。刷新失败、快照
+没有变化、或者存在活动 sidecar，都必须把状态传给用户；不能静默复用旧快照。
+只处理已生成文件的渲染 Skill，以及用户明确提供的离线快照，可以跳过刷新，但要
+记录 `refresh_before_read: false` 或跳过原因。增量刷新只更新本地解密数据，不保证
+微信服务器同步完成，也不能恢复已删除或已撤回的原文。
+
 ## 二、统一对象规则
 
 所有结果使用 UTF-8 JSON。字符串 ID 是 source-scoped opaque ID，例如
