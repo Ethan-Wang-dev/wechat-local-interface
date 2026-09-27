@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="560" viewBox="0 0 1600 560" role="img" aria-labelledby="title desc">
+  <title id="title">WeChat Local Interface</title>
+  <desc id="desc">A local first read only data plane connecting a decrypted WeChat snapshot to Mousia through a language neutral protocol.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07152d"/>
+      <stop offset="0.52" stop-color="#10173a"/>
+      <stop offset="1" stop-color="#241246"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5eead4" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#67e8f9" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#67e8f9"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#8aa4d6" stroke-opacity="0.08"/>
+    </pattern>
+  </defs>
+  <rect width="1600" height="560" rx="30" fill="url(#bg)"/>
+  <rect x="24" y="24" width="1552" height="512" rx="24" fill="url(#grid)"/>
+  <circle cx="1320" cy="70" r="210" fill="#67e8f9" opacity="0.08" filter="url(#glow)"/>
+  <circle cx="1460" cy="420" r="230" fill="#a78bfa" opacity="0.11" filter="url(#glow)"/>
+  <path d="M720 405 C920 288 1010 290 1230 160" fill="none" stroke="url(#beam)" stroke-width="2"/>
+  <path d="M790 470 C1010 420 1100 420 1370 300" fill="none" stroke="url(#beam)" stroke-width="1" opacity="0.6"/>
+  <g opacity="0.8" fill="none" stroke="#67e8f9" stroke-width="1">
+    <path d="M1040 128l95 55-6 110-102 55-95-55 6-110z" opacity="0.34"/>
+    <path d="M1260 266l75 44-5 86-80 43-75-43 5-86z" opacity="0.3"/>
+  </g>
+  <g fill="#dffbff" filter="url(#glow)">
+    <circle cx="1040" cy="128" r="4"/><circle cx="1135" cy="183" r="4"/><circle cx="1129" cy="293" r="4"/>
+    <circle cx="1260" cy="266" r="4"/><circle cx="1335" cy="310" r="4"/><circle cx="1330" cy="396" r="4"/>
+  </g>
+  <g transform="translate(112 112)">
+    <rect x="0" y="0" width="58" height="58" rx="16" fill="url(#accent)"/>
+    <path d="M16 21h26M16 29h20M16 37h14" stroke="#07152d" stroke-width="4" stroke-linecap="round"/>
+  </g>
+  <text x="112" y="250" fill="#f8fbff" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="64" font-weight="760" letter-spacing="-2">WeChat Local Interface</text>
+  <text x="116" y="306" fill="#b7c7e8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="25" letter-spacing="0.3">A read-only, local-first data plane for Mousia</text>
+  <rect x="116" y="354" width="520" height="2" fill="url(#accent)" opacity="0.85"/>
+  <text x="116" y="405" fill="#d9e5ff" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="18">SQLite snapshot  ·  stable IDs  ·  JSON protocol  ·  object relationships</text>
+  <g transform="translate(116 452)" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="15" font-weight="650">
+    <rect width="146" height="34" rx="17" fill="#67e8f9" fill-opacity="0.16" stroke="#67e8f9" stroke-opacity="0.55"/>
+    <text x="73" y="22" text-anchor="middle" fill="#bff8ff">LOCAL ONLY</text>
+    <rect x="160" width="142" height="34" rx="17" fill="#a78bfa" fill-opacity="0.16" stroke="#a78bfa" stroke-opacity="0.55"/>
+    <text x="231" y="22" text-anchor="middle" fill="#e2d9ff">READ ONLY</text>
+    <rect x="316" width="180" height="34" rx="17" fill="#f0abfc" fill-opacity="0.13" stroke="#f0abfc" stroke-opacity="0.5"/>
+    <text x="406" y="22" text-anchor="middle" fill="#f9dcff">MOUSIA READY</text>
+  </g>
+</svg>
