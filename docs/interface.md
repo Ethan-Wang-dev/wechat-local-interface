@@ -1,77 +1,834 @@
-# WeChat Local Interface 数据接口 v0
+# WeChat Local Interface 接口规范
 
-## 用户旅程与验收
+版本：`v0`
+数据契约：`mousia.wechat.v0`
+Python 包：`wechat_local_interface`
+CLI：`wechat-local-interface`
 
-用户已经通过自己选择的外部工具获得本机微信明文数据库。用户显式提供目录和逻辑数据源 ID，检查状态、列出会话、选择会话与时间范围，导出可迁移的数据包。下游插件读取数据包，无需解密工具、Mousia Store 或模型服务。
+本文档描述当前代码实际提供的 Python API、CLI、返回结构、过滤规则、分页游标、导出包和错误行为。它不描述解密过程；解密由用户选择的外部工具完成。
 
-验收标准：
+## 1. 工作流和快照要求
 
-- 源库只读，拒绝加密库、符号链接、活动 WAL/SHM/journal、未知消息字段。
-- 结构化输出包含联系人、会话、消息、链接/引用/附件元数据、时间和定位信息；图片/语音/文件不猜测正文。
-- 压缩消息正确解码；失败时保留定位、内容哈希和质量原因，不把乱码当正文。
-- ID 以显式 source_id 隔离账号，稳定且不暴露内部微信账号；大整数转换为字符串。
-- 分页游标绑定数据版本和筛选范围；源库变化后要求重新开始。
-- 对同一范围再次导出，可与前次数据包比较并输出新增/更新，包括迟到消息；缺失不推断为删除。
-- 导出为私有目录和 JSONL，不写入知识库，不调用外部 Skill、网络或模型，不发布 HTTP 接口。
+标准使用流程如下：
 
-## 边界
+1. 使用外部工具获得微信明文数据库。
+2. 将数据库整理成稳定的离线快照。
+3. 创建 `WeChatSource`。
+4. 先调用 `status()`，确认可选数据库是否存在。
+5. 用联系人、会话或公众号接口确定查询范围。
+6. 用读取/搜索接口获取结构化记录，或用导出接口生成 JSONL 包。
+7. 把 JSONL 或内存中的记录交给下游插件处理。
 
-连接器支持已解密的 Mac 4.x contact/contact.db、message/message_<数字>.db、biz_message_<数字>.db，以及存在时的 favorite/favorite.db 和 sns/sns.db。读取必要的消息资源索引来补充附件文件名和大小。收藏夹和朋友圈只解析数据库中已有的文字、标题、链接和媒体元数据，不读取媒体正文，不访问链接，也不负责 Windows 格式、多账号自动发现、调度或解密。
+### 1.1 快照目录
 
-数据库布局和字段名是输入格式事实；代码独立实现，不导入、复制或调用 yichen 的脚本。外部解密工具由用户独立管理。真实库及导出数据不进入项目/Git。
+```text
+snapshot/
+├── contact/
+│   └── contact.db                    # 必需
+├── message/
+│   ├── message_0.db                  # 至少一个 message_*.db 或 biz_message_*.db
+│   ├── biz_message_0.db              # 可选的公众号消息分片
+│   └── message_resource.db           # 可选，文件元数据索引
+├── favorite/
+│   └── favorite.db                   # 可选，收藏夹
+└── sns/
+    └── sns.db                        # 可选，朋友圈
+```
 
-## 接口
+连接器只识别文件名符合以下规则的消息分片：
 
-`WeChatSource(snapshot, source_id, account_username=None)` 提供：
+- `message_<数字>.db`
+- `biz_message_<数字>.db`
 
-- `status()`：结构、数据版本、可用解码器和限制。
-- `list_contacts(query=None, kinds=None, is_subscription=None, limit=1000)`：查询联系人和已在消息库中出现的发言人，返回稳定 actor_id；可按名称、person/group 和公众号标记过滤。
-- `list_conversations(query=None, kinds=None, has_messages=None)`：返回精确 conversation_id；不自动挑选同名群。
-- `read_items(conversation_ids, start=None, end=None, author_usernames=None, author_ids=None, kinds=None, directions=None, qualities=None, query=None, has_links=None, has_attachments=None, limit=100, cursor=None)`：结构化消息分页；ISO 8601 时间需包含时区，范围为 `[start, end)`。
-- `search_items(query, conversation_ids=None, ...)`：在指定会话或全部已发现会话中搜索消息；其余过滤参数与 `read_items` 相同。
-- `list_official_accounts(query=None, limit=1000)`：列出联系人库中的公众号，返回 actor_id、username、对应会话和是否有消息。
-- `list_favorites(query=None, start=None, end=None, author_usernames=None, author_ids=None, kinds=None, has_links=None, has_attachments=None, limit=100, cursor=None)`：读取收藏夹，支持文本、图片、文章、名片和视频号等类型过滤。
-- `search_favorites(query, ...)`：在收藏标题、正文、链接和附件名中搜索。
-- `list_moments(query=None, start=None, end=None, author_usernames=None, author_ids=None, kinds=None, has_links=None, has_attachments=None, limit=100, cursor=None)`：读取朋友圈，支持作者、时间、类型、链接和媒体元数据过滤。
-- `search_moments(query, ...)`：在朋友圈正文、标题、链接和附件名中搜索。
-- `search_all(query, scopes=None, start=None, end=None, limit=100)`：统一搜索消息、收藏夹和朋友圈；缺少对应可选数据库时在 `unavailable` 中说明。
-- `export_bundle(output_root, conversation_ids, start=None, end=None, author_usernames=None, author_ids=None, kinds=None, directions=None, qualities=None, query=None, has_links=None, has_attachments=None, previous=None)`：按同一组过滤条件导出完整 JSONL 数据包和对比变化。
-- `export_favorites(output_root, ...)` / `export_moments(output_root, ...)`：把过滤后的收藏夹或朋友圈导出为私有 JSONL 包，支持 `previous` 对比新增和更新。
+`contact/contact.db` 和至少一个消息分片缺失时，构造连接器会失败。`favorite.db`、`sns.db`、`message_resource.db` 可以缺失；对应功能会在调用时报告缺失。
 
-常用过滤条件：
+### 1.2 稳定快照
 
-- `author_usernames`：精确 username、联系人备注名或昵称；名称不唯一时拒绝猜测。
-- `author_ids`：已返回的稳定 `actor_id`，适合缓存和跨次调用。
-- `kinds`：`text`、`image`、`voice`、`video`、`sticker`、`link`、`file`、`quote`、`call`、`system`、`unsupported` 等。
-- `directions`：`incoming`、`outgoing`、`unknown`；需要传入 `account_username` 才能区分收发。
-- `qualities`：`complete`、`metadata_only`、`unsupported`、`decode_error`。
-- `query`：不区分大小写匹配正文、标题、链接和附件名。
-- `has_links` / `has_attachments`：只保留是否包含链接或附件元数据的消息。
+快照必须是不会继续被微信或解密程序写入的副本。连接器会拒绝：
 
-多个条件同时提供时使用 AND；同一条件中的多个值使用 OR。游标和导出增量范围会绑定完整过滤条件。
+- 快照根目录、`contact`、`message`、`favorite`、`sns` 目录或其直接子文件中的符号链接；
+- 数据库旁存在活动的 `-wal`、`-shm` 或 `-journal` 文件；
+- 加密库、非普通文件或缺少必要表/字段的数据库。
 
-CLI：`wechat-local-interface --snapshot DIR --source-id ID status|contacts|conversations|official|search|items|export|favorites|moments`。`official` 列出公众号；`favorites` 和 `moments` 支持 `--author`、`--kind`、`--query`、`--start`、`--end`、`--has-link/--no-has-link`、`--has-attachment/--no-has-attachment`，传 `--output` 时直接导出 JSONL 包。消息 `search`、`items` 和 `export` 还支持 `--direction`、`--quality` 和 `--official-only`；`search --scope favorites|moments|all` 可切换统一搜索范围。它是独立连接器入口，不负责通用插件宿主。
+连接器使用 SQLite URI `mode=ro&immutable=1`，并额外执行 `PRAGMA query_only=ON`。它不会修改源数据库。
 
-## 数据包与字段
+## 2. 安装和导入
 
-`manifest.json`、`actors.jsonl`、`conversations.jsonl`、`items.jsonl`、`changes.jsonl`。`manifest.json` 同时记录规范化后的过滤条件，便于下游复现范围。
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[zstandard]'
+```
 
-消息、收藏夹和朋友圈记录共用 `schema_version: "mousia.wechat.v0"`，并通过 `resource_type` 区分 `message`、`favorite`、`moment`：
+导入方式：
 
-| 字段 | 含义 |
+```python
+from wechat_local_interface import SCHEMA_VERSION, WeChatSource
+
+source = WeChatSource(
+    snapshot="/path/to/decrypted/current",
+    source_id="my-wechat",
+    account_username="my-account",
+)
+```
+
+### 2.1 构造参数
+
+| 参数 | 类型 | 必需 | 规范 |
+|---|---|---:|---|
+| `snapshot` | `str \| pathlib.Path` | 是 | 已解密快照目录；不能是符号链接。 |
+| `source_id` | `str` | 是 | 只能使用字母、数字、`.`、`_`、`-`，长度 1–64；用于隔离不同账号。 |
+| `account_username` | `str \| None` | 否 | 当前登录账号的微信 username。提供后，能识别发言人时才判断 `incoming/outgoing`。 |
+
+`source_id` 会进入稳定 ID 和游标。对同一个快照使用不同 `source_id`，会得到不同的外部 ID。
+
+## 3. 通用约定
+
+### 3.1 时间
+
+所有 Python 查询接口的 `start`、`end` 都要求带时区的 ISO 8601 字符串，例如：
+
+```text
+2026-09-01T00:00:00Z
+2026-09-30T23:59:59-07:00
+```
+
+时间范围是左闭右开：`[start, end)`。`start` 省略表示没有下界，`end` 省略表示没有上界。`start >= end` 会报错。
+
+数据库中的 Unix 秒或毫秒时间会转换成 UTC ISO 8601，例如 `2023-11-14T22:13:20Z`。缺失或无效时间为 `null`；时间过滤不会把没有时间的记录猜测到范围内。
+
+CLI 也把 `--start` 和 `--end` 原样交给 Python 接口，因此同样建议使用带时区的 ISO 8601。
+
+### 3.2 ID
+
+所有 ID 都是字符串，不把 SQLite 大整数暴露为 JSON number：
+
+| ID | 含义 |
 |---|---|
-| id / source_id / conversation_id | 稳定消息 ID、用户指定数据源、会话引用 |
-| author_id / direction | 联系人引用；未确认本人时方向为 unknown |
-| kind / created_at | 文本、图片、语音、视频、链接、文件、引用、系统或 unsupported；UTC 时间 |
-| text / title / links | 已成功抽取的正文、标题、URL；只记录 URL，不访问 |
-| attachments | 类型、文件名、大小等元数据；availability 为 metadata_only，不承诺文件本体存在 |
-| relations | 引用消息关系，能匹配本次范围时包含 target_id，其他情况保持 unresolved |
-| quality | complete / metadata_only / unsupported / decode_error 及原因 |
-| provenance | 相对数据库、表、local_id/server_id 字符串、原始类型、原始内容 SHA-256 |
-| revision | 规范化消息的内容哈希（不包含导出时间） |
+| `actor_<hash>` | 联系人、发言人或资源作者 |
+| `conversation_<hash>` | 会话 |
+| `item_<hash>` | 聊天消息 |
+| `favorite_<hash>` | 收藏记录 |
+| `moment_<hash>` | 朋友圈记录 |
 
-收藏夹和朋友圈沿用 `id`、`source_id`、`author_id`、`author_username`、`created_at`、`kind`、`text`、`title`、`links`、`attachments`、`quality`、`provenance`、`revision` 字段；朋友圈额外保留 `post_type`，收藏夹额外保留 `source_chat`。`attachments` 只表示数据库索引里的媒体或附件元数据，`availability` 为 `metadata_only`，不代表本体会随数据包输出。
+哈希输入包含 `source_id`。同一个微信 username 在不同 `source_id` 下不会得到相同的外部 ID。底层定位放在 `provenance` 中；它适合本地复查，不应当被当作跨账号的公共 ID。
 
-来源对象统一标记 private、local、untrusted。ID 去标识化不等于正文匿名化。保留确定性的原始定位，不复制原始 XML/二进制；复杂 XML（合并转发、卡片、小程序等）不宣称完整解析。
+### 3.3 过滤组合
 
-分页游标只用于同一快照；跨快照同步由前次包对比完成。`changes.jsonl` 为带完整 item 的 upsert，op 为 added 或 updated；未变化项不输出。缺失项只在 manifest 统计，不产生删除操作。首版每次重新扫描选定范围，并不声称源库层面的 CDC。
+不同过滤参数之间使用 AND；同一个列表参数中的多个值使用 OR。例如：
+
+```python
+source.read_items(
+    conversation_ids=[conversation_id],
+    author_usernames=["张三", "李四"],
+    kinds=["text", "link"],
+    has_links=True,
+)
+```
+
+含义是：发言人是张三或李四，消息类型是文本或链接，并且包含链接。
+
+查询字符串使用不区分大小写的子字符串匹配，匹配范围如下：
+
+- 消息：`text`、`title`、`links`、附件名称；
+- 收藏夹：`text`、`title`、作者 username、`links`、附件名称；
+- 朋友圈：`text`、`title`、作者 username、`links`、附件名称。
+
+空的 `query` 等同于没有查询条件；搜索接口的主查询参数必须是非空字符串。
+
+### 3.4 限制和排序
+
+- 所有分页读取接口的 `limit` 必须为 `1–5000`。
+- 默认 `limit` 为 `100`。
+- 消息按创建时间升序返回；同一时间按本地 ID 和稳定 ID 排序。
+- 收藏夹和朋友圈按创建/更新时间降序返回；同一时间按稳定 ID 排序。
+- `list_contacts()` 和 `list_official_accounts()` 的默认 `limit` 为 `1000`，允许范围也是 `1–5000`。
+- `list_conversations()` 不使用分页，返回当前发现的全部会话。
+
+### 3.5 常见错误
+
+所有接口使用 `ValueError` 报告输入或快照问题。常见错误包括：
+
+- `snapshot 必须是非符号链接目录`
+- `缺少 contact/contact.db`
+- `缺少 message/message_<数字>.db 或 biz_message_<数字>.db`
+- `缺少 favorite/favorite.db`
+- `缺少 sns/sns.db`
+- `snapshot 存在活动 sidecar，请提供稳定的离线快照`
+- `未知 conversation_id`
+- `未知 author_id`
+- `发言人名称不唯一，请使用 username`
+- `start 必须早于 end`
+- `无效或过期 cursor`
+
+CLI 会把这些错误写到 stderr 并返回退出码 `2`；成功返回 `0`。
+
+## 4. Python API
+
+以下接口都是 `WeChatSource` 的公开方法。返回值均为普通 `dict`、`list` 和 JSON 可序列化的标量。
+
+### 4.1 `status()`
+
+```python
+status() -> dict
+```
+
+返回连接器和快照能力，不读取消息正文。典型结构：
+
+```json
+{
+  "schema_version": "mousia.wechat.v0",
+  "source_id": "my-wechat",
+  "snapshot": "/path/to/decrypted/current",
+  "source_kind": "wechat_mac_decrypted_vault",
+  "message_databases": ["message_0.db", "biz_message_0.db"],
+  "conversation_count": 42,
+  "resource_index": true,
+  "favorite_index": true,
+  "moments_index": true,
+  "decoders": {"utf8": true, "zstandard": true},
+  "snapshot_version": "<32 位十六进制字符串>",
+  "capabilities": ["contacts", "conversations", "messages", "search", "filters", "export", "official_accounts", "favorites", "moments"],
+  "limitations": ["no_media_body_decode", "no_network", "no_knowledge_store_write"]
+}
+```
+
+字段说明：
+
+- `resource_index`、`favorite_index`、`moments_index` 表示对应数据库文件是否存在；
+- `decoders.zstandard` 表示当前 Python 环境是否安装 zstandard，不代表快照一定含压缩消息；
+- `snapshot_version` 会随源文件列表、大小、inode 和修改时间变化；
+- `capabilities` 表示连接器实现的能力，具体可选数据库是否存在由三个 `*_index` 字段判断。
+
+### 4.2 `list_contacts()`
+
+```python
+list_contacts(
+    query: str | None = None,
+    *,
+    kinds: list[str] | None = None,
+    is_subscription: bool | None = None,
+    limit: int = 1000,
+) -> list[dict]
+```
+
+用途：列出联系人数据库和消息 `Name2Id` 中出现的 actor。`query` 匹配 display name 或 username。
+
+参数：
+
+- `kinds`：`person`、`group`；
+- `is_subscription=True`：只列公众号；`False`：排除公众号；
+- `limit`：返回上限。
+
+返回 actor 记录：
+
+```json
+{
+  "id": "actor_<hash>",
+  "username": "wxid_example",
+  "display_name": "张三",
+  "kind": "person",
+  "account_kind": "person",
+  "is_subscription": false
+}
+```
+
+`display_name` 优先使用备注名，其次是昵称、alias、username。公众号一般通过 contact 表标记或 `gh_` username 识别。
+
+### 4.3 `list_conversations()`
+
+```python
+list_conversations(
+    query: str | None = None,
+    *,
+    kinds: list[str] | None = None,
+    has_messages: bool | None = None,
+) -> list[dict]
+```
+
+用途：列出消息库中能发现的会话，并返回后续 `read_items()`、`export_bundle()` 使用的 `conversation_id`。
+
+参数：
+
+- `query`：匹配会话 display name 或 username；
+- `kinds`：`person`、`group`；
+- `has_messages`：只保留当前消息库中有记录或没有记录的会话。
+
+返回：
+
+```json
+{
+  "id": "conversation_<hash>",
+  "display_name": "After Noise",
+  "kind": "group",
+  "account_kind": "group",
+  "is_official": false,
+  "message_table": "Msg_<md5(username)>",
+  "has_messages": true
+}
+```
+
+名称相同的群不会自动合并，也不会自动选择其中一个；调用方应保存返回的 `id`。
+
+### 4.4 `list_official_accounts()`
+
+```python
+list_official_accounts(
+    query: str | None = None,
+    *,
+    limit: int = 1000,
+) -> list[dict]
+```
+
+用途：列出识别为公众号的联系人。公众号识别优先使用 contact 表的订阅标记，同时兼容常见的 `gh_` username。
+
+返回：
+
+```json
+{
+  "id": "actor_<hash>",
+  "username": "gh_example",
+  "display_name": "示例公众号",
+  "kind": "official_account",
+  "account_kind": "official_account",
+  "is_subscription": true,
+  "has_messages": true,
+  "conversation_id": "conversation_<hash>"
+}
+```
+
+`conversation_id` 可能为 `null`，表示联系人存在但当前消息分片中没有可发现的会话表。公众号聊天记录仍可通过普通会话接口读取；消息搜索还支持 `official_only`。
+
+### 4.5 `read_items()`：读取消息
+
+```python
+read_items(
+    conversation_ids: list[str],
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    author_usernames: list[str] | None = None,
+    author_ids: list[str] | None = None,
+    kinds: list[str] | None = None,
+    directions: list[str] | None = None,
+    qualities: list[str] | None = None,
+    query: str | None = None,
+    has_links: bool | None = None,
+    has_attachments: bool | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
+    official_only: bool | None = None,
+) -> dict
+```
+
+`conversation_ids` 不能为空，且每个 ID 必须由 `list_conversations()` 返回。返回结构：
+
+```json
+{
+  "schema_version": "mousia.wechat.v0",
+  "source_id": "my-wechat",
+  "snapshot": "<查询范围的快照令牌>",
+  "items": [],
+  "next_cursor": "<十六进制游标或 null>",
+  "total_in_scope": 123
+}
+```
+
+消息专用过滤：
+
+| 参数 | 可选值/行为 |
+|---|---|
+| `author_usernames` | 精确 username、备注名或昵称。名称不唯一或无法解析时失败。 |
+| `author_ids` | 已知 `actor_id`；未知 ID 失败。 |
+| `kinds` | `text`、`image`、`voice`、`video`、`sticker`、`contact_card`、`location`、`link`、`file`、`quote`、`call`、`system`、`unsupported`。 |
+| `directions` | `incoming`、`outgoing`、`unknown`。没有 `account_username` 或没有发言人映射时为 `unknown`。 |
+| `qualities` | `complete`、`metadata_only`、`unsupported`、`decode_error`。 |
+| `query` | 匹配正文、标题、链接和附件名。 |
+| `has_links` | `True` 只保留至少一个链接，`False` 只保留没有链接的消息。 |
+| `has_attachments` | `True` 只保留存在附件元数据的消息，`False` 只保留没有附件的消息。 |
+| `official_only` | `True` 只保留公众号会话，`False` 排除公众号会话，`None` 不限制。 |
+
+消息字段见第 5 节。
+
+### 4.6 `search_items()`：搜索消息
+
+```python
+search_items(
+    query: str,
+    conversation_ids: list[str] | None = None,
+    **same_filters_as_read_items,
+) -> dict
+```
+
+`query` 必须是非空字符串。传入 `conversation_ids` 时只搜索指定会话；省略时搜索所有已发现会话。其余参数与 `read_items()` 相同，包含时间、作者、类型、方向、质量、链接、附件、分页和 `official_only`。
+
+示例：
+
+```python
+result = source.search_items(
+    "项目",
+    conversation_ids=[conversation_id],
+    author_usernames=["张三"],
+    kinds=["text", "link"],
+    start="2026-09-01T00:00:00Z",
+    end="2026-10-01T00:00:00Z",
+)
+```
+
+### 4.7 `list_favorites()`：读取收藏夹
+
+```python
+list_favorites(
+    query: str | None = None,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    author_usernames: list[str] | None = None,
+    author_ids: list[str] | None = None,
+    kinds: list[str] | None = None,
+    has_links: bool | None = None,
+    has_attachments: bool | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
+) -> dict
+```
+
+要求 `favorite/favorite.db` 存在且含 `fav_db_item` 表。没有该文件时抛出 `ValueError("缺少 favorite/favorite.db")`。
+
+收藏类型：
+
+- `text`
+- `image`
+- `article`
+- `contact_card`
+- `video`
+- `unknown`
+
+收藏的时间使用 `update_time`（兼容常见字段别名），输出为 `created_at`。`author_usernames` 匹配收藏记录中的来源 username；如果数据库记录没有来源，`author_id` 和 `author_username` 为 `null`。
+
+返回结构与消息分页结构相同，但外层 `resource_type` 为 `favorites`，每条记录的 `resource_type` 为 `favorite`。
+
+### 4.8 `search_favorites()`：搜索收藏夹
+
+```python
+search_favorites(query: str, **same_filters_as_list_favorites) -> dict
+```
+
+`query` 必须非空。搜索收藏记录的正文、标题、作者 username、链接和附件名称。
+
+### 4.9 `list_moments()`：读取朋友圈
+
+```python
+list_moments(
+    query: str | None = None,
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    author_usernames: list[str] | None = None,
+    author_ids: list[str] | None = None,
+    kinds: list[str] | None = None,
+    has_links: bool | None = None,
+    has_attachments: bool | None = None,
+    limit: int = 100,
+    cursor: str | None = None,
+) -> dict
+```
+
+要求 `sns/sns.db` 存在且含 `SnsTimeLine` 表。没有该文件时抛出 `ValueError("缺少 sns/sns.db")`。
+
+朋友圈类型：
+
+- `text`
+- `image`
+- `video`
+- `link`
+- `mixed`
+- `unknown`
+
+类型由已有 XML 中的正文、链接、媒体节点和 content style 推断。它是标准化检索标签，不承诺覆盖微信所有内部类型。
+
+返回结构与消息分页结构相同，但外层 `resource_type` 为 `moments`，每条记录的 `resource_type` 为 `moment`。
+
+### 4.10 `search_moments()`：搜索朋友圈
+
+```python
+search_moments(query: str, **same_filters_as_list_moments) -> dict
+```
+
+`query` 必须非空。搜索朋友圈正文、标题、作者 username、链接和附件名称。
+
+### 4.11 `search_all()`：统一搜索
+
+```python
+search_all(
+    query: str,
+    *,
+    scopes: list[str] | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    limit: int = 100,
+) -> dict
+```
+
+`scopes` 可选值：`messages`、`favorites`、`moments`。省略时搜索三类资源。返回：
+
+```json
+{
+  "schema_version": "mousia.wechat.v0",
+  "source_id": "my-wechat",
+  "query": "项目",
+  "items": [],
+  "total_in_scope": 12,
+  "unavailable": {}
+}
+```
+
+- `items` 混合三类记录，按 `created_at` 降序排列；
+- `limit` 是混合结果的总上限；
+- 当前接口不提供跨资源 cursor；需要完整读取时分别调用三个资源接口；
+- 可选数据库缺失、表不存在或不可读时，该资源会进入 `unavailable`，消息范围的错误仍会直接抛出；
+- `search_all()` 只支持统一的关键词和时间范围，不接受消息专用的 `directions`、`qualities` 或会话 ID。
+
+### 4.12 `export_bundle()`：导出消息
+
+```python
+export_bundle(
+    output_root: str | pathlib.Path,
+    conversation_ids: list[str],
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    author_usernames: list[str] | None = None,
+    author_ids: list[str] | None = None,
+    kinds: list[str] | None = None,
+    directions: list[str] | None = None,
+    qualities: list[str] | None = None,
+    query: str | None = None,
+    has_links: bool | None = None,
+    has_attachments: bool | None = None,
+    previous: str | pathlib.Path | None = None,
+    official_only: bool | None = None,
+) -> dict
+```
+
+导出不受 `read_items` 的默认 `limit` 影响，会完整扫描指定范围。导出目录不能位于 snapshot 内，也不能与 snapshot 重叠。如果目标已存在，会自动使用 `-001`、`-002` 等后缀，不覆盖旧导出。
+
+消息导出包：
+
+```text
+export/
+├── manifest.json
+├── actors.jsonl
+├── conversations.jsonl
+├── items.jsonl
+└── changes.jsonl
+```
+
+`previous` 必须指向同一 source、同一 schema 和同一筛选范围的旧导出目录。变化规则：
+
+- 旧包没有的 ID：`{"op":"added","item":...}`；
+- 相同 ID 但 `revision` 变化：`{"op":"updated","item":...}`；
+- 当前范围缺少旧记录：只计入 `missing_from_previous`，不产生删除操作；
+- 同一消息在多个分片出现时，导出会按稳定 ID 去重，并在 `duplicate_observations` 记录重复数量。
+
+### 4.13 `export_favorites()` 和 `export_moments()`
+
+```python
+export_favorites(
+    output_root: str | pathlib.Path,
+    *,
+    previous: str | pathlib.Path | None = None,
+    **same_filters_as_list_favorites,
+) -> dict
+
+export_moments(
+    output_root: str | pathlib.Path,
+    *,
+    previous: str | pathlib.Path | None = None,
+    **same_filters_as_list_moments,
+) -> dict
+```
+
+两者都会完整扫描符合条件的资源，不受查询接口默认 `limit` 影响。输出包结构为：
+
+```text
+export/
+├── manifest.json
+├── actors.jsonl
+├── items.jsonl
+└── changes.jsonl
+```
+
+收藏夹导出的 manifest `resource_type` 为 `favorites`，朋友圈导出的 manifest `resource_type` 为 `moments`。`previous` 对比规则与消息导出相同。
+
+## 5. 记录字段规范
+
+消息、收藏夹和朋友圈使用同一 schema 版本，并通过 `resource_type` 区分资源：
+
+- 消息记录：`resource_type = "message"`
+- 收藏记录：`resource_type = "favorite"`
+- 朋友圈记录：`resource_type = "moment"`
+
+### 5.1 通用字段
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `schema_version` | string | 当前为 `mousia.wechat.v0`。 |
+| `resource_type` | string | `message`、`favorite` 或 `moment`。 |
+| `id` | string | 来源隔离的稳定 ID。 |
+| `source_id` | string | 构造连接器时传入的来源 ID。 |
+| `author_id` | string/null | 稳定 actor ID；数据库没有可确认作者时为 `null`。 |
+| `author_username` | string/null | 数据库中记录的作者 username；可能为空。 |
+| `created_at` | string/null | UTC ISO 8601 时间。收藏夹使用收藏更新时间。 |
+| `kind` | string | 资源类型标签。 |
+| `text` | string/null | 已成功抽取的正文；媒体没有正文时为 `null` 或空值。 |
+| `title` | string/null | 标题、文件名或卡片标题。 |
+| `links` | string[] | 数据库/XML 中已存在的 URL；不会访问。 |
+| `attachments` | object[] | 媒体、文件或附件索引元数据；不会输出本体。 |
+| `quality` | object | 解析质量和失败原因。 |
+| `provenance` | object | 数据库、表、本地 ID、原始类型和内容哈希。 |
+| `revision` | string | 规范化字段的 SHA-256，用于导出变更比较。 |
+
+### 5.2 消息字段
+
+消息额外包含：
+
+| 字段 | 说明 |
+|---|---|
+| `conversation_id` | 所属会话 ID。 |
+| `direction` | `incoming`、`outgoing` 或 `unknown`。 |
+| `relations` | 引用消息关系；引用目标可以包含 `target_server_id` 和 source 隔离的 `target_id`。 |
+
+消息 `kind` 的主要含义：
+
+| kind | 说明 |
+|---|---|
+| `text` | 普通文本。 |
+| `image`、`voice`、`video`、`sticker` | 媒体消息；不猜测媒体正文。 |
+| `link` | 文章或链接卡片。 |
+| `file` | 文件卡片；附件中可能包含名称和大小。 |
+| `contact_card` | 名片。 |
+| `location` | 位置。 |
+| `quote` | 引用/回复。 |
+| `call` | 通话。 |
+| `system` | 系统消息。 |
+| `unsupported` | 已识别消息表但当前标准化器不承诺解析。 |
+
+### 5.3 收藏夹字段
+
+收藏记录额外包含：
+
+| 字段 | 说明 |
+|---|---|
+| `source_chat` | 数据库中记录的来源聊天名称；可能为 `null`。 |
+| `provenance.favorite_type` | 微信原始收藏类型整数。 |
+
+### 5.4 朋友圈字段
+
+朋友圈记录额外包含：
+
+| 字段 | 说明 |
+|---|---|
+| `post_type` | XML 中已有的 content style/sub style；没有时为空字符串。 |
+| `attachments` | XML 中已有的 media 节点，只保留类型、名称、URL/缩略图等元数据。 |
+
+### 5.5 `quality`
+
+```json
+{"status": "complete", "reason": null}
+```
+
+`status` 的含义：
+
+- `complete`：正文/结构化字段成功解析；
+- `metadata_only`：有媒体或附件元数据，但没有正文或不读取本体；
+- `unsupported`：消息类型存在，但当前标准化器不承诺解析；
+- `decode_error`：UTF-8 或 zstd 内容解码失败；`reason` 会说明原因，正文不会伪装成乱码。
+
+### 5.6 `attachments`
+
+附件是元数据，不是文件本体。常见字段：
+
+```json
+{
+  "kind": "file",
+  "name": "example.pdf",
+  "size_bytes": 123456,
+  "availability": "metadata_only"
+}
+```
+
+`url`、`thumb` 等字段只表示数据库已有的字符串；连接器不会跟随这些地址。
+
+### 5.7 `provenance`
+
+定位字段示例：
+
+```json
+{
+  "database": "message_0.db",
+  "table": "Msg_<hash>",
+  "local_id": "42",
+  "server_id": "9007199254740993",
+  "local_type": 1,
+  "raw_content_sha256": "<64 位十六进制字符串>"
+}
+```
+
+不同资源的 provenance 字段会包含各自的原始类型或数据库表字段。下游程序应把它当作定位信息，不要依赖某个未在本版本说明中的数据库内部字段。
+
+## 6. 分页和快照一致性
+
+`read_items()`、`list_favorites()`、`list_moments()` 使用同一种不透明 cursor：
+
+1. 第一次请求不传 `cursor`；
+2. 响应中有 `next_cursor` 时，把它原样传给下一页；
+3. 不要解析、修改或跨不同筛选条件复用 cursor；
+4. 如果数据源文件发生变化，或 start/end/过滤条件变化，会收到 `无效或过期 cursor`；
+5. 需要重新创建 `WeChatSource` 并从第一页开始。
+
+游标内部绑定：
+
+- `source_id`；
+- 源文件版本；
+- 资源类型；
+- 时间范围；
+- 全部过滤条件；
+- 当前页位置。
+
+它不是跨时间持久化同步 token。需要跨次增量处理时，使用 `export_*` 的 `previous`。
+
+## 7. 导出 manifest
+
+典型 manifest：
+
+```json
+{
+  "schema_version": "mousia.wechat.v0",
+  "source_id": "my-wechat",
+  "source_kind": "wechat_mac_decrypted_vault",
+  "resource_type": "favorites",
+  "privacy": {
+    "visibility": "private",
+    "storage": "local",
+    "trust": "untrusted"
+  },
+  "snapshot": "<32 位快照令牌>",
+  "filters": {},
+  "counts": {
+    "items": 10,
+    "added": 10,
+    "updated": 0,
+    "missing_from_previous": 0
+  }
+}
+```
+
+`items.jsonl` 每行是一条完整记录；`actors.jsonl` 每行是一个导出范围内实际出现的作者；消息包还包含 `conversations.jsonl`。所有 JSONL 使用 UTF-8，每行一个 JSON 对象。
+
+## 8. CLI 完整规范
+
+全局参数：
+
+```text
+--snapshot DIR             已解密快照目录，必需
+--source-id ID             稳定来源 ID，必需
+--account-username USER    当前账号，用于判断消息方向，可选
+```
+
+### `status`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID status
+```
+
+输出 `status()` 的 JSON 对象。
+
+### `contacts`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID contacts \
+  [--query TEXT] [--kind person|group] [--subscription|--no-subscription] [--limit N]
+```
+
+### `conversations`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID conversations \
+  [--query TEXT] [--kind person|group] [--has-messages|--no-has-messages]
+```
+
+### `official`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID official \
+  [--query TEXT] [--limit N]
+```
+
+### `search`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID search QUERY [CONVERSATION_ID ...] \
+  [--scope messages|favorites|moments|all] \
+  [--start ISO] [--end ISO] [--author VALUE] [--kind KIND] \
+  [--direction incoming|outgoing|unknown] \
+  [--quality complete|metadata_only|unsupported|decode_error] \
+  [--has-link|--no-has-link] [--has-attachment|--no-has-attachment] \
+  [--official-only|--no-official-only] [--limit N] [--cursor CURSOR]
+```
+
+- 默认 `--scope messages`；`CONVERSATION_ID` 只对消息搜索生效；
+- `--scope favorites` 或 `moments` 使用对应资源的搜索接口；
+- `--scope all` 调用 `search_all()`，只使用 query、start、end、limit；
+- 重复选项如 `--author`、`--kind` 可传多次。
+
+### `items`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID items CONVERSATION_ID [CONVERSATION_ID ...] \
+  [--start ISO] [--end ISO] [--author VALUE] [--kind KIND] \
+  [--direction VALUE] [--quality VALUE] [--query TEXT] \
+  [--has-link|--no-has-link] [--has-attachment|--no-has-attachment] \
+  [--official-only|--no-official-only] [--limit N] [--cursor CURSOR]
+```
+
+对应 `read_items()`。
+
+### `export`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID export CONVERSATION_ID [CONVERSATION_ID ...] \
+  --output DIR [--previous DIR] [message filters...]
+```
+
+对应 `export_bundle()`，会写入新的私有导出目录。
+
+### `favorites` 和 `moments`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID favorites|moments \
+  [--query TEXT] [--start ISO] [--end ISO] [--author VALUE] [--kind KIND] \
+  [--has-link|--no-has-link] [--has-attachment|--no-has-attachment] \
+  [--limit N] [--cursor CURSOR] [--output DIR] [--previous DIR]
+```
+
+不传 `--output` 时返回分页查询 JSON；传 `--output` 时完整扫描当前过滤范围并导出 JSONL 包。`--limit` 和 `--cursor` 只影响屏幕查询，不限制导出完整性。
+
+## 9. 当前限制
+
+- 只支持已解密的 Mac 4.x 数据布局；Windows 快照不在本接口范围内。
+- 不包含密钥提取、解密、增量解密调度或微信客户端自动化。
+- 不读取媒体正文，也不保证本地媒体文件仍然存在。
+- 复杂合并转发、小程序、卡片、朋友圈互动和部分微信内部类型只做保守的元数据标准化。
+- 不做摘要、Embedding、知识库写入或 HTTP 服务。
+- 数据库字段会随微信版本变化；未知字段或表结构会明确失败或降级为 `unsupported`，不会静默猜测。
+
+## 10. 版本兼容
+
+`SCHEMA_VERSION` 当前为 `mousia.wechat.v0`。下游程序应：
+
+1. 检查 `schema_version`；
+2. 对未知字段保持兼容；
+3. 不依赖数据库内部表名作为公共 API；
+4. 使用 `resource_type` 区分消息、收藏和朋友圈；
+5. 使用 `revision` 和 manifest 计数做导出更新判断。
