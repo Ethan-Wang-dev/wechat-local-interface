@@ -130,6 +130,11 @@
         "title": {"$ref": "#/$defs/stringOrNull"},
         "links": {"type": "array", "items": {"type": "string"}},
         "attachments": {"type": "array", "items": {"$ref": "#/$defs/attachment"}},
+        "metadata": {"type": "object", "description": "所有可识别 XML 标量字段和属性"},
+        "is_pinned": {"type": "boolean"},
+        "is_private": {"type": "boolean"},
+        "visibility": {"type": "object"},
+        "location": {"type": ["object", "null"]},
         "quality": {"$ref": "#/$defs/quality"},
         "provenance": {"$ref": "#/$defs/provenance"},
         "revision": {"type": "string"}

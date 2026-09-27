@@ -139,6 +139,29 @@ def _xml_text(root: ET.Element, *paths: str) -> str:
     return ""
 
 
+def _xml_metadata(root: ET.Element, *, value_limit: int = 16_384) -> dict[str, Any]:
+    """Return a lossless-enough, language-neutral view of XML scalar fields.
+
+    WeChat changes XML layouts between releases.  The normalized fields below
+    cover common semantics, while this map keeps every scalar tag and its
+    attributes queryable without exposing the original XML blob.
+    """
+    fields: dict[str, list[str]] = {}
+    attributes: dict[str, list[dict[str, str]]] = {}
+    for element in root.iter():
+        tag = element.tag.rsplit("}", 1)[-1]
+        value = (element.text or "").strip()
+        if value and len(value) <= value_limit and not list(element):
+            fields.setdefault(tag, []).append(value)
+        if element.attrib:
+            attrs = {str(key).rsplit("}", 1)[-1]: str(val) for key, val in element.attrib.items()}
+            attributes.setdefault(tag, []).append(attrs)
+    return {
+        "fields": {key: values[0] if len(values) == 1 else values for key, values in sorted(fields.items())},
+        "attributes": {key: values[0] if len(values) == 1 else values for key, values in sorted(attributes.items())},
+    }
+
+
 def _extract_urls(value: str) -> list[str]:
     # URL extraction is deliberately local; the connector never dereferences URLs.
     found = re.findall(r"https?://[^\s<>\"']+", value or "")
@@ -907,6 +930,9 @@ class WeChatSource:
         kinds: list[str] | None = None,
         has_links: bool | None = None,
         has_attachments: bool | None = None,
+        is_pinned: bool | None = None,
+        is_private: bool | None = None,
+        has_location: bool | None = None,
         limit: int = 100,
         cursor: str | None = None,
     ) -> dict:
@@ -923,6 +949,9 @@ class WeChatSource:
             query=query,
             has_links=has_links,
             has_attachments=has_attachments,
+            is_pinned=is_pinned,
+            is_private=is_private,
+            has_location=has_location,
         )
         filters.update({"start": start, "end": end})
         rows = [row for row in self._iter_moments(start, end) if self._matches_collection(row, filters)]
@@ -1024,6 +1053,9 @@ class WeChatSource:
             query=filters.get("query"),
             has_links=filters.get("has_links"),
             has_attachments=filters.get("has_attachments"),
+            is_pinned=filters.get("is_pinned"),
+            is_private=filters.get("is_private"),
+            has_location=filters.get("has_location"),
         )
         normalized.update({"start": filters.get("start"), "end": filters.get("end")})
         return normalized
@@ -1038,6 +1070,9 @@ class WeChatSource:
         query: str | None,
         has_links: bool | None,
         has_attachments: bool | None,
+        is_pinned: bool | None = None,
+        is_private: bool | None = None,
+        has_location: bool | None = None,
     ) -> dict:
         known = self._known_actor_usernames()
         by_display: dict[str, list[str]] = {}
@@ -1067,6 +1102,9 @@ class WeChatSource:
             "query": str(query or "").casefold().strip(),
             "has_links": has_links,
             "has_attachments": has_attachments,
+            "is_pinned": is_pinned,
+            "is_private": is_private,
+            "has_location": has_location,
         }
 
     @staticmethod
@@ -1082,6 +1120,12 @@ class WeChatSource:
         if filters.get("has_links") is not None and bool(item.get("links")) is not filters["has_links"]:
             return False
         if filters.get("has_attachments") is not None and bool(item.get("attachments")) is not filters["has_attachments"]:
+            return False
+        if filters.get("is_pinned") is not None and bool(item.get("is_pinned")) is not filters["is_pinned"]:
+            return False
+        if filters.get("is_private") is not None and bool(item.get("is_private")) is not filters["is_private"]:
+            return False
+        if filters.get("has_location") is not None and bool(item.get("location")) is not filters["has_location"]:
             return False
         query = filters.get("query", "")
         if query:
@@ -1166,17 +1210,18 @@ class WeChatSource:
                     "links": parsed["links"],
                     "attachments": parsed["attachments"],
                     "source_chat": source_chat,
+                    "metadata": parsed["metadata"],
                     "quality": {"status": "decode_error" if decode_error else ("metadata_only" if parsed["attachments"] and not parsed["text"] else "complete"), "reason": decode_error},
                     "provenance": {"database": self.favorite_db.name, "table": "fav_db_item", "local_id": local_id, "favorite_type": fav_type, "raw_content_sha256": _sha(raw if isinstance(raw, bytes) else str(raw or ""))},
                 }
-                item["revision"] = _sha(json.dumps({key: item[key] for key in ("author_id", "created_at", "kind", "text", "title", "links", "attachments", "source_chat", "quality")}, ensure_ascii=False, sort_keys=True))
+                item["revision"] = _sha(json.dumps({key: item[key] for key in ("author_id", "created_at", "kind", "text", "title", "links", "attachments", "source_chat", "metadata", "quality")}, ensure_ascii=False, sort_keys=True))
                 yield item
 
     @staticmethod
     def _parse_favorite_payload(content: str, fav_type: int) -> dict:
         root = _parse_xml(content)
         if root is None:
-            return {"text": content.strip()[:_MAX_DECODED_BYTES], "title": "", "links": _extract_urls(content), "attachments": []}
+            return {"text": content.strip()[:_MAX_DECODED_BYTES], "title": "", "links": _extract_urls(content), "attachments": [], "metadata": {}}
         title = _xml_text(root, ".//pagetitle", ".//title", ".//filename", ".//nickname")
         text = _xml_text(root, ".//desc", ".//content", ".//description")
         if fav_type == 1 and not text:
@@ -1186,10 +1231,10 @@ class WeChatSource:
         for media in root.findall(".//media"):
             media_type = _xml_text(media, ".//type") or "media"
             url = _xml_text(media, ".//url", ".//thumb")
-            attachments.append({"kind": media_type, "name": _xml_text(media, ".//name", ".//filename") or None, "url": url or None, "availability": "metadata_only"})
+            attachments.append({"kind": media_type, "name": _xml_text(media, ".//name", ".//filename") or None, "url": url or None, "availability": "metadata_only", "metadata": _xml_metadata(media)})
         if fav_type == 2 and not attachments:
             attachments.append({"kind": "image", "name": None, "availability": "metadata_only"})
-        return {"text": text.strip() or None, "title": title, "links": sorted(set(links)), "attachments": attachments}
+        return {"text": text.strip() or None, "title": title, "links": sorted(set(links)), "attachments": attachments, "metadata": _xml_metadata(root)}
 
     def _iter_moments(self, start: str | None, end: str | None) -> Iterator[dict]:
         start_ts = self._parse_iso(start) if start else None
@@ -1234,17 +1279,22 @@ class WeChatSource:
                     "links": parsed["links"],
                     "attachments": attachments,
                     "post_type": parsed["post_type"],
+                    "is_pinned": parsed["is_pinned"],
+                    "is_private": parsed["is_private"],
+                    "visibility": parsed["visibility"],
+                    "location": parsed["location"],
+                    "metadata": parsed["metadata"],
                     "quality": {"status": "decode_error" if decode_error else ("metadata_only" if attachments and not parsed["text"] else "complete"), "reason": decode_error},
                     "provenance": {"database": self.sns_db.name, "table": "SnsTimeLine", "local_id": local_id, "raw_content_sha256": _sha(raw if isinstance(raw, bytes) else str(raw or ""))},
                 }
-                item["revision"] = _sha(json.dumps({key: item[key] for key in ("author_id", "created_at", "kind", "text", "title", "links", "attachments", "post_type", "quality")}, ensure_ascii=False, sort_keys=True))
+                item["revision"] = _sha(json.dumps({key: item[key] for key in ("author_id", "created_at", "kind", "text", "title", "links", "attachments", "post_type", "is_pinned", "is_private", "visibility", "location", "metadata", "quality")}, ensure_ascii=False, sort_keys=True))
                 yield item
 
     @staticmethod
     def _parse_moment_payload(content: str, fallback_username: str) -> dict:
         root = _parse_xml(content)
         if root is None:
-            return {"_username": fallback_username, "_timestamp": 0, "kind": "unknown", "text": content.strip() or None, "title": "", "links": _extract_urls(content), "attachments": [], "post_type": ""}
+            return {"_username": fallback_username, "_timestamp": 0, "kind": "unknown", "text": content.strip() or None, "title": "", "links": _extract_urls(content), "attachments": [], "post_type": "", "is_pinned": False, "is_private": False, "visibility": {"private": False, "policy": "unknown"}, "location": None, "metadata": {}}
         if root.tag == "TimelineObject":
             timeline = root
         else:
@@ -1262,7 +1312,7 @@ class WeChatSource:
         for media in timeline.findall(".//media"):
             media_type = _xml_text(media, "type") or "media"
             media_types.append(media_type.casefold())
-            attachments.append({"kind": media_type, "name": _xml_text(media, "name", "filename") or None, "url": _xml_text(media, "url", "thumb") or None, "availability": "metadata_only"})
+            attachments.append({"kind": media_type, "name": _xml_text(media, "name", "filename") or None, "url": _xml_text(media, "url", "thumb") or None, "availability": "metadata_only", "metadata": _xml_metadata(media)})
         if any("video" in value for value in media_types) or post_type in {"6", "2"}:
             kind = "video"
         elif attachments:
@@ -1275,7 +1325,29 @@ class WeChatSource:
             kind = "unknown"
         if attachments and text and kind in {"image", "video"}:
             kind = "mixed"
-        return {"_username": username, "_timestamp": int(timestamp) if timestamp.isdigit() else 0, "kind": kind, "text": text.strip() or None, "title": title, "links": sorted(set(links)), "attachments": attachments, "post_type": post_type}
+        is_private = _xml_text(timeline, "private") == "1"
+        is_pinned = _xml_text(timeline, "isTop") == "1"
+        location = None
+        location_node = timeline.find(".//location")
+        if location_node is not None:
+            location_metadata = _xml_metadata(location_node)
+            if location_metadata["fields"] or location_metadata["attributes"]:
+                location = location_metadata
+        return {
+            "_username": username,
+            "_timestamp": int(timestamp) if timestamp.isdigit() else 0,
+            "kind": kind,
+            "text": text.strip() or None,
+            "title": title,
+            "links": sorted(set(links)),
+            "attachments": attachments,
+            "post_type": post_type,
+            "is_pinned": is_pinned,
+            "is_private": is_private,
+            "visibility": {"private": is_private, "policy": "unknown"},
+            "location": location,
+            "metadata": _xml_metadata(timeline),
+        }
 
     def _export_collection_bundle(self, output_root: str | Path, resource: str, rows: list[dict], filters: dict, previous: str | Path | None) -> dict:
         requested = Path(output_root).expanduser().resolve()
@@ -1807,10 +1879,11 @@ class WeChatSource:
             "links": links,
             "attachments": attachments,
             "relations": relations,
+            "metadata": _xml_metadata(structured_root) if structured_root is not None else {},
             "quality": {"status": quality_status, "reason": decode_error},
             "provenance": provenance,
         }
-        normalized["revision"] = _sha(json.dumps({key: normalized[key] for key in ("conversation_id", "author_id", "direction", "kind", "created_at", "text", "title", "links", "attachments", "relations", "quality")}, ensure_ascii=False, sort_keys=True))
+        normalized["revision"] = _sha(json.dumps({key: normalized[key] for key in ("conversation_id", "author_id", "direction", "kind", "created_at", "text", "title", "links", "attachments", "relations", "metadata", "quality")}, ensure_ascii=False, sort_keys=True))
         return normalized
 
     def _direction(self, sender_username: str | None, conversation_username: str) -> str:

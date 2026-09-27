@@ -87,6 +87,10 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--kind", action="append", choices=kinds)
         command.add_argument("--has-link", action=argparse.BooleanOptionalAction)
         command.add_argument("--has-attachment", action=argparse.BooleanOptionalAction)
+        if resource == "moments":
+            command.add_argument("--is-pinned", action=argparse.BooleanOptionalAction)
+            command.add_argument("--is-private", action=argparse.BooleanOptionalAction)
+            command.add_argument("--has-location", action=argparse.BooleanOptionalAction)
         command.add_argument("--limit", type=int, default=100)
         command.add_argument("--cursor")
         command.add_argument("--output", type=Path)
@@ -121,6 +125,9 @@ def _filters(args: argparse.Namespace, *, include_query: bool = True) -> dict:
         "query": getattr(args, "query", None) if include_query else None,
         "has_links": getattr(args, "has_link", None),
         "has_attachments": getattr(args, "has_attachment", None),
+        "is_pinned": getattr(args, "is_pinned", None),
+        "is_private": getattr(args, "is_private", None),
+        "has_location": getattr(args, "has_location", None),
         "official_only": getattr(args, "official_only", None),
     }
     if not include_query:
@@ -163,26 +170,41 @@ def main(argv: list[str] | None = None) -> int:
             output(source.list_official_accounts(args.query, limit=args.limit))
         elif args.command == "search":
             if args.scope == "messages":
-                output(source.search_items(args.query, args.conversation_id or None, start=args.start, end=args.end, limit=args.limit, cursor=args.cursor, **_filters(args, include_query=False)))
+                filters = _filters(args, include_query=False)
+                for key in ("is_pinned", "is_private", "has_location"):
+                    filters.pop(key, None)
+                output(source.search_items(args.query, args.conversation_id or None, start=args.start, end=args.end, limit=args.limit, cursor=args.cursor, **filters))
             elif args.scope in {"favorites", "moments"}:
                 method = source.search_favorites if args.scope == "favorites" else source.search_moments
                 filters = _filters(args, include_query=False)
                 filters.pop("official_only", None)
                 filters.pop("directions", None)
                 filters.pop("qualities", None)
+                if args.scope == "favorites":
+                    for key in ("is_pinned", "is_private", "has_location"):
+                        filters.pop(key, None)
                 output(method(args.query, start=args.start, end=args.end, limit=args.limit, **filters))
             else:
                 output(source.search_all(args.query, start=args.start, end=args.end, limit=args.limit))
         elif args.command == "items":
-            output(source.read_items(args.conversation_id, **_filters(args)))
+            filters = _filters(args)
+            for key in ("is_pinned", "is_private", "has_location"):
+                filters.pop(key, None)
+            output(source.read_items(args.conversation_id, **filters))
         elif args.command == "export":
-            output(source.export_bundle(args.output, args.conversation_id, previous=args.previous, **_filters(args)))
+            filters = _filters(args)
+            for key in ("is_pinned", "is_private", "has_location"):
+                filters.pop(key, None)
+            output(source.export_bundle(args.output, args.conversation_id, previous=args.previous, **filters))
         elif args.command in {"favorites", "moments"}:
             method = source.list_favorites if args.command == "favorites" else source.list_moments
             filters = _filters(args)
             filters.pop("official_only", None)
             filters.pop("directions", None)
             filters.pop("qualities", None)
+            if args.command == "favorites":
+                for key in ("is_pinned", "is_private", "has_location"):
+                    filters.pop(key, None)
             result = method(start=args.start, end=args.end, limit=args.limit, cursor=args.cursor, **filters)
             if args.output:
                 export_method = source.export_favorites if args.command == "favorites" else source.export_moments

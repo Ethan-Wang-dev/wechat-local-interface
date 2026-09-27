@@ -39,6 +39,9 @@
         "kinds": {"$ref": "#/$defs/stringArray"},
         "has_links": {"$ref": "#/$defs/boolOrNull"},
         "has_attachments": {"$ref": "#/$defs/boolOrNull"},
+        "is_pinned": {"$ref": "#/$defs/boolOrNull"},
+        "is_private": {"$ref": "#/$defs/boolOrNull"},
+        "has_location": {"$ref": "#/$defs/boolOrNull"},
         "limit": {"$ref": "#/$defs/limit"},
         "cursor": {"$ref": "#/$defs/cursor"}
       }

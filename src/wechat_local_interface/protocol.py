@@ -23,7 +23,7 @@ _COMMON_MESSAGE_FILTERS = {
 }
 _COLLECTION_FILTERS = {
     "query", "start", "end", "author_usernames", "author_ids", "kinds",
-    "has_links", "has_attachments", "limit", "cursor",
+    "has_links", "has_attachments", "is_pinned", "is_private", "has_location", "limit", "cursor",
 }
 _MESSAGE_EXPORT_FILTERS = _COMMON_MESSAGE_FILTERS - {"cursor"}
 _COLLECTION_EXPORT_FILTERS = _COLLECTION_FILTERS - {"cursor"}
@@ -69,6 +69,7 @@ _ARRAY_PARAMS = {
 _BOOL_PARAMS = {
     "is_subscription", "is_friend", "is_owner", "has_messages", "has_links",
     "has_attachments", "official_only",
+    "is_pinned", "is_private", "has_location",
 }
 _STRING_PARAMS = {
     "conversation_id", "actor_id", "object_id", "subject_id", "start",

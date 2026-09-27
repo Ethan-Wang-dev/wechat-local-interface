@@ -512,6 +512,9 @@ list_moments(
     kinds: list[str] | None = None,
     has_links: bool | None = None,
     has_attachments: bool | None = None,
+    is_pinned: bool | None = None,
+    is_private: bool | None = None,
+    has_location: bool | None = None,
     limit: int = 100,
     cursor: str | None = None,
 ) -> dict
@@ -531,6 +534,16 @@ list_moments(
 类型由已有 XML 中的正文、链接、媒体节点和 content style 推断。它是标准化检索标签，不承诺覆盖微信所有内部类型。
 
 返回结构与消息分页结构相同，但外层 `resource_type` 为 `moments`，每条记录的 `resource_type` 为 `moment`。
+
+朋友圈记录还提供 `is_pinned`、`is_private`、`visibility`、`location`、
+`post_type` 和 `metadata`。`metadata.fields` 保存 XML 中所有标量标签，
+`metadata.attributes` 保存所有属性；媒体附件也有自己的 `metadata`。当本地
+XML 没有明确的可见期限枚举时，`visibility.policy` 为 `unknown`，不会推断
+“3 天、1 个月、半年或全部可见”。
+
+收藏和消息记录同样提供 `metadata`，因此新版本微信新增的 XML 标签无需先
+修改接口才能查询；跨版本稳定且常用的字段才会另外提升为顶层字段。完整的
+数据库表、字段和语义审计见 [`docs/database-schema-inventory.md`](database-schema-inventory.md)。
 
 ### 4.14 `search_moments()`：搜索朋友圈
 

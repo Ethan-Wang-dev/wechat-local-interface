@@ -193,6 +193,7 @@ results = source.search_all(
 
 - [`docs/interface.md`](docs/interface.md)：Python API、CLI、过滤器、分页和导出；
 - [`docs/protocol.md`](docs/protocol.md)：跨语言协议和对象模型。
+- [`docs/database-schema-inventory.md`](docs/database-schema-inventory.md)：SQLite 表、XML 标签和字段语义审计；可用 `tools/inspect_snapshot_schema.py` 对新版本快照重复检查。
 
 ## 设计边界
 

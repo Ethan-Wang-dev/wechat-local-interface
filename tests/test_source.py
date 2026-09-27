@@ -2,6 +2,8 @@ import contextlib
 import io
 import json
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from hashlib import md5
@@ -506,7 +508,7 @@ class WeChatSecondaryResourceTests(unittest.TestCase):
         with sqlite3.connect(self.root / "sns/sns.db") as con:
             con.execute("CREATE TABLE SnsTimeLine(tid INTEGER, user_name TEXT, content TEXT, pack_info_buf TEXT)")
             con.executemany("INSERT INTO SnsTimeLine VALUES(?,?,?,?)", [
-                (11, "person-a", "<TimelineObject><username>person-a</username><createTime>1700000200</createTime><contentDesc>朋友圈干货</contentDesc></TimelineObject>", b"\\xff\\xfe"),
+                (11, "person-a", "<TimelineObject><username>person-a</username><createTime>1700000200</createTime><contentDesc>朋友圈干货</contentDesc><isTop>1</isTop><location city='上海'><poiName>咖啡店</poiName></location></TimelineObject>", b"\\xff\\xfe"),
                 (12, "person-a", "<TimelineObject><username>person-a</username><createTime>1700000300</createTime><contentDesc>带链接</contentDesc><ContentObject><contentUrl>https://example.com/moment</contentUrl></ContentObject></TimelineObject>", b"\\xff\\xfe"),
             ])
 
@@ -538,8 +540,32 @@ class WeChatSecondaryResourceTests(unittest.TestCase):
         self.assertEqual(["朋友圈干货"], [row["text"] for row in found["items"]])
         linked = source.list_moments(has_links=True)
         self.assertEqual(["带链接"], [row["text"] for row in linked["items"]])
+        pinned = source.list_moments(is_pinned=True, has_location=True)["items"]
+        self.assertEqual(["朋友圈干货"], [row["text"] for row in pinned])
+        self.assertEqual("1", pinned[0]["metadata"]["fields"]["isTop"])
+        self.assertEqual("上海", pinned[0]["location"]["attributes"]["location"]["city"])
         all_found = source.search_all("干货")
         self.assertEqual(["朋友圈干货"], [row["text"] for row in all_found["items"]])
+
+    def test_metadata_audit_tool_and_protocol_moment_filters(self):
+        source = self.source()
+        protocol = WeChatProtocol(source)
+        response = protocol.handle({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": "metadata-1",
+            "operation": "moments.list",
+            "params": {"is_pinned": True, "has_location": True},
+        })
+        self.assertTrue(response["ok"])
+        self.assertEqual(["朋友圈干货"], [row["text"] for row in response["data"]["items"]])
+        report = self.base / "schema.json"
+        tool = Path(__file__).parents[1] / "tools/inspect_snapshot_schema.py"
+        subprocess.run([sys.executable, str(tool), str(self.root), "--sample-limit", "20", "--output", str(report)], check=True)
+        inventory = json.loads(report.read_text())
+        sns = next(db for db in inventory["databases"] if db["path"].endswith("sns.db"))
+        timeline = next(table for table in sns["tables"] if table["name"] == "SnsTimeLine")
+        xml = next(column for column in timeline["xml_columns"] if column["column"] == "content")
+        self.assertIn("isTop", xml["tags"])
 
     def test_cli_secondary_commands_and_export(self):
         out = io.StringIO()
