@@ -14,7 +14,8 @@ WeChat Local Interface 是一个面向 macOS 微信明文数据库的本地、�
 
 | 数据 | 数据库 | 能力 |
 |---|---|---|
-| 联系人 | `contact/contact.db` | 联系人、群聊、公众号识别和稳定 `actor_id` |
+| 联系人 | `contact/contact.db` | 联系人、群聊、公众号、好友状态识别和稳定 `actor_id` |
+| 群聊关系 | `contact/chat_room`、`contact/chatroom_member` | 群成员、群主、好友/陌生人分类、共同群和关系边 |
 | 聊天记录 | `message/message_*.db`、`message/biz_message_*.db` | 文本、图片、语音、视频、链接、文件、引用、系统消息 |
 | 消息资源索引 | `message/message_resource.db` | 已有索引中的文件名和大小，不读取文件本体 |
 | 收藏夹 | `favorite/favorite.db`（可选） | 文本、图片、文章、名片、视频号，支持搜索和导出 |
@@ -60,6 +61,12 @@ wechat-local-interface --snapshot ./wechat-snapshot --source-id my-wechat contac
 wechat-local-interface --snapshot ./wechat-snapshot --source-id my-wechat conversations --kind group
 wechat-local-interface --snapshot ./wechat-snapshot --source-id my-wechat official --query "公众号"
 
+# 群成员和对象关系（先从 conversations 取得 conversation_id）
+wechat-local-interface --snapshot ./wechat-snapshot --source-id my-wechat members CONVERSATION_ID --friend
+wechat-local-interface --snapshot ./wechat-snapshot --source-id my-wechat contact-groups ACTOR_ID
+wechat-local-interface --snapshot ./wechat-snapshot --source-id my-wechat common-groups ACTOR_ID_1 ACTOR_ID_2
+wechat-local-interface --snapshot ./wechat-snapshot --source-id my-wechat relations --type owns
+
 # 消息检索
 wechat-local-interface --snapshot ./wechat-snapshot --source-id my-wechat search "项目" --kind link
 wechat-local-interface --snapshot ./wechat-snapshot --source-id my-wechat search "项目" --official-only
@@ -94,6 +101,9 @@ source = WeChatSource(
 )
 
 accounts = source.list_official_accounts()
+groups = source.list_conversations(kinds=["group"])
+group_members = source.list_group_members(groups[0]["id"], is_friend=True) if groups else None
+contact_groups = source.list_contact_groups("actor_<hash>")
 favorites = source.search_favorites("文章", kinds=["article"])
 moments = source.list_moments(author_usernames=["张三"], has_links=True)
 results = source.search_all(
@@ -104,7 +114,9 @@ results = source.search_all(
 
 ## 输出特点
 
-每条记录都有来源隔离的稳定 ID、UTC 时间、资源类型、质量标记和数据库定位信息。消息、收藏夹和朋友圈可以分别分页，也可以通过 `search_all()` 获取统一搜索结果。导出包包含 JSONL 文件和 `manifest.json`，可以在不依赖微信数据库的情况下交给下游插件处理。
+每条记录都有来源隔离的稳定 ID、UTC 时间、资源类型、质量标记和数据库定位信息。联系人、群聊、群成员和群主使用同一套 `actor_id`/`conversation_id`，可以从联系人反查所在群，也可以导出 `member_of`、`owns` 关系边。消息、收藏夹和朋友圈可以分别分页，也可以通过 `search_all()` 获取统一搜索结果。导出包包含 JSONL 文件和 `manifest.json`，可以在不依赖微信数据库的情况下交给下游插件处理。
+
+群成员的 `friend_status` 来自微信 `contact.local_type`：`friend` 表示通讯录好友，`non_friend` 表示群内陌生人，`unknown` 表示快照缺少可判断字段；`self` 表示当前账号。`in_contact_database` 只表示数据库存在对应联系人行，不能单独当作好友结论。缺少 `chat_room`/`chatroom_member` 时会降级为消息中观察到的发言人，并标记 `complete: false`。
 
 ## 开发
 

@@ -116,6 +116,7 @@ CLI 也把 `--start` 和 `--end` 原样交给 Python 接口，因此同样建议
 | `item_<hash>` | 聊天消息 |
 | `favorite_<hash>` | 收藏记录 |
 | `moment_<hash>` | 朋友圈记录 |
+| `relationship_<hash>` | 联系人与群聊之间的关系边 |
 
 哈希输入包含 `source_id`。同一个微信 username 在不同 `source_id` 下不会得到相同的外部 ID。底层定位放在 `provenance` 中；它适合本地复查，不应当被当作跨账号的公共 ID。
 
@@ -193,9 +194,11 @@ status() -> dict
   "resource_index": true,
   "favorite_index": true,
   "moments_index": true,
+  "group_membership_index": true,
+  "friendship_classification": true,
   "decoders": {"utf8": true, "zstandard": true},
   "snapshot_version": "<32 位十六进制字符串>",
-  "capabilities": ["contacts", "conversations", "messages", "search", "filters", "export", "official_accounts", "favorites", "moments"],
+  "capabilities": ["contacts", "conversations", "messages", "search", "filters", "export", "official_accounts", "favorites", "moments", "group_members", "relationships"],
   "limitations": ["no_media_body_decode", "no_network", "no_knowledge_store_write"]
 }
 ```
@@ -215,6 +218,7 @@ list_contacts(
     *,
     kinds: list[str] | None = None,
     is_subscription: bool | None = None,
+    is_friend: bool | None = None,
     limit: int = 1000,
 ) -> list[dict]
 ```
@@ -225,6 +229,7 @@ list_contacts(
 
 - `kinds`：`person`、`group`；
 - `is_subscription=True`：只列公众号；`False`：排除公众号；
+- `is_friend=True`：只列本地标记为通讯录好友的个人；`False`：只列明确标记为群内陌生人的个人；`None`：不按好友状态筛选；
 - `limit`：返回上限。
 
 返回 actor 记录：
@@ -236,11 +241,18 @@ list_contacts(
   "display_name": "张三",
   "kind": "person",
   "account_kind": "person",
-  "is_subscription": false
+  "is_subscription": false,
+  "in_contact_database": true,
+  "is_friend": true,
+  "friend_status": "friend",
+  "is_self": false,
+  "friendship_evidence": {"database": "contact/contact.db", "local_type": 1, "delete_flag": 0}
 }
 ```
 
 `display_name` 优先使用备注名，其次是昵称、alias、username。公众号一般通过 contact 表标记或 `gh_` username 识别。
+
+好友状态是本地快照中的分类：`friend` 对应 `contact.local_type` 为 `1` 或 `5`，`non_friend` 对应 `3` 或 `6`，`deleted` 表示 `delete_flag` 非零，`self` 表示构造连接器时传入的 `account_username`，`unknown` 表示字段缺失或版本无法判断。群聊和公众号的 `is_friend` 为 `null`。`in_contact_database` 只表示存在联系人行；需要判断好友时使用 `is_friend` 和 `friend_status`。
 
 ### 4.3 `list_conversations()`
 
@@ -253,7 +265,7 @@ list_conversations(
 ) -> list[dict]
 ```
 
-用途：列出消息库中能发现的会话，并返回后续 `read_items()`、`export_bundle()` 使用的 `conversation_id`。
+用途：列出消息库中能发现的会话，并补充 contact.db 中的群聊关系；返回后续 `read_items()`、`export_bundle()` 使用的 `conversation_id`。只有联系人库里存在但消息库没有记录的群会标记 `has_messages=false`。
 
 参数：
 
@@ -271,13 +283,77 @@ list_conversations(
   "account_kind": "group",
   "is_official": false,
   "message_table": "Msg_<md5(username)>",
-  "has_messages": true
+  "has_messages": true,
+  "member_count": 12,
+  "owner_actor_id": "actor_<hash>",
+  "membership_source": "contact_db"
 }
 ```
 
 名称相同的群不会自动合并，也不会自动选择其中一个；调用方应保存返回的 `id`。
 
-### 4.4 `list_official_accounts()`
+`member_count`、`owner_actor_id` 和 `membership_source` 在 `contact.db` 含有群成员表时可用；缺少表或没有对应关系时为 `null`。`membership_source` 的值为 `contact_db`、`message_observed` 或 `null`。
+
+### 4.4 `list_group_members()`：群成员和好友状态
+
+```python
+list_group_members(
+    conversation_id: str,
+    *,
+    query: str | None = None,
+    is_friend: bool | None = None,
+    is_owner: bool | None = None,
+    limit: int = 5000,
+) -> dict
+```
+
+`conversation_id` 必须指向群聊。接口优先读取 `contact/chat_room` 和 `contact/chatroom_member`，将成员 id 解析为 actor；如果快照没有这些表，则退回到该群消息中实际观察到的发言人，并返回 `complete: false`。
+
+返回结构中的 `members` 每行包含 `member_id`、`actor_id`、`username`、`display_name`、`in_contact_database`、`is_friend`、`friend_status`、`is_self`、`is_owner`、`friendship_evidence` 和 `provenance`。`member_count` 是未过滤的成员总数，`total_in_scope` 是过滤后的数量；`friend_counts` 提供未过滤成员的状态计数。
+
+`query` 匹配成员显示名或 username；`is_friend`、`is_owner` 与其它过滤条件使用 AND。`membership_source` 为 `contact_db`、`message_observed` 或 `unavailable`，`complete` 表示是否读取了完整成员表。
+
+### 4.5 `list_contact_groups()`：联系人所在群
+
+```python
+list_contact_groups(
+    actor_id: str,
+    *,
+    query: str | None = None,
+    limit: int = 1000,
+) -> list[dict]
+```
+
+`actor_id` 可以是稳定 `actor_id`、微信 username 或唯一显示名。返回该 actor 出现在成员表（或消息观察结果）中的群会话记录，每项额外包含 `is_owner`、`membership_source` 和 `complete`。
+
+### 4.6 `list_common_groups()`：共同群
+
+```python
+list_common_groups(
+    actor_ids: list[str],
+    *,
+    query: str | None = None,
+    limit: int = 1000,
+) -> list[dict]
+```
+
+`actor_ids` 至少包含两个不同联系人。接口对每个 actor 的群集合取交集；当某个群只在消息观察结果中出现时，结果保留 `complete: false`。
+
+### 4.7 `list_relationships()`：关系边
+
+```python
+list_relationships(
+    *,
+    subject_id: str | None = None,
+    object_id: str | None = None,
+    relationship_types: list[str] | None = None,
+    limit: int = 5000,
+) -> list[dict]
+```
+
+返回统一的对象图边：`member_of` 表示 actor 是群成员，`owns` 表示 actor 是群主。每条边包含 `subject_id`（actor）、`object_id`（conversation）、嵌入的 `subject`/`object`、`membership_source`、`complete` 和 `provenance`。群主同时也是成员时会得到一条 `member_of` 和一条 `owns` 边。
+
+### 4.8 `list_official_accounts()`
 
 ```python
 list_official_accounts(
@@ -306,7 +382,7 @@ list_official_accounts(
 
 `conversation_id` 可能为 `null`，表示联系人存在但当前消息分片中没有可发现的会话表。公众号聊天记录仍可通过普通会话接口读取；消息搜索还支持 `official_only`。
 
-### 4.5 `read_items()`：读取消息
+### 4.9 `read_items()`：读取消息
 
 ```python
 read_items(
@@ -357,7 +433,7 @@ read_items(
 
 消息字段见第 5 节。
 
-### 4.6 `search_items()`：搜索消息
+### 4.10 `search_items()`：搜索消息
 
 ```python
 search_items(
@@ -382,7 +458,7 @@ result = source.search_items(
 )
 ```
 
-### 4.7 `list_favorites()`：读取收藏夹
+### 4.11 `list_favorites()`：读取收藏夹
 
 ```python
 list_favorites(
@@ -415,7 +491,7 @@ list_favorites(
 
 返回结构与消息分页结构相同，但外层 `resource_type` 为 `favorites`，每条记录的 `resource_type` 为 `favorite`。
 
-### 4.8 `search_favorites()`：搜索收藏夹
+### 4.12 `search_favorites()`：搜索收藏夹
 
 ```python
 search_favorites(query: str, **same_filters_as_list_favorites) -> dict
@@ -423,7 +499,7 @@ search_favorites(query: str, **same_filters_as_list_favorites) -> dict
 
 `query` 必须非空。搜索收藏记录的正文、标题、作者 username、链接和附件名称。
 
-### 4.9 `list_moments()`：读取朋友圈
+### 4.13 `list_moments()`：读取朋友圈
 
 ```python
 list_moments(
@@ -456,7 +532,7 @@ list_moments(
 
 返回结构与消息分页结构相同，但外层 `resource_type` 为 `moments`，每条记录的 `resource_type` 为 `moment`。
 
-### 4.10 `search_moments()`：搜索朋友圈
+### 4.14 `search_moments()`：搜索朋友圈
 
 ```python
 search_moments(query: str, **same_filters_as_list_moments) -> dict
@@ -464,7 +540,7 @@ search_moments(query: str, **same_filters_as_list_moments) -> dict
 
 `query` 必须非空。搜索朋友圈正文、标题、作者 username、链接和附件名称。
 
-### 4.11 `search_all()`：统一搜索
+### 4.15 `search_all()`：统一搜索
 
 ```python
 search_all(
@@ -496,7 +572,7 @@ search_all(
 - 可选数据库缺失、表不存在或不可读时，该资源会进入 `unavailable`，消息范围的错误仍会直接抛出；
 - `search_all()` 只支持统一的关键词和时间范围，不接受消息专用的 `directions`、`qualities` 或会话 ID。
 
-### 4.12 `export_bundle()`：导出消息
+### 4.16 `export_bundle()`：导出消息
 
 ```python
 export_bundle(
@@ -527,9 +603,12 @@ export/
 ├── manifest.json
 ├── actors.jsonl
 ├── conversations.jsonl
+├── relationships.jsonl
 ├── items.jsonl
 └── changes.jsonl
 ```
+
+`relationships.jsonl` 包含选中群聊范围内的 `member_of` 和 `owns` 关系边；成员 actor 即使没有在时间筛选内发言，也会写入 `actors.jsonl`。消息 manifest 的 `counts.relationships` 是关系边数量。
 
 `previous` 必须指向同一 source、同一 schema 和同一筛选范围的旧导出目录。变化规则：
 
@@ -538,7 +617,7 @@ export/
 - 当前范围缺少旧记录：只计入 `missing_from_previous`，不产生删除操作；
 - 同一消息在多个分片出现时，导出会按稳定 ID 去重，并在 `duplicate_observations` 记录重复数量。
 
-### 4.13 `export_favorites()` 和 `export_moments()`
+### 4.17 `export_favorites()` 和 `export_moments()`
 
 ```python
 export_favorites(
@@ -755,7 +834,8 @@ wechat-local-interface --snapshot DIR --source-id ID status
 
 ```bash
 wechat-local-interface --snapshot DIR --source-id ID contacts \
-  [--query TEXT] [--kind person|group] [--subscription|--no-subscription] [--limit N]
+  [--query TEXT] [--kind person|group] [--subscription|--no-subscription] \
+  [--friend|--no-friend] [--limit N]
 ```
 
 ### `conversations`
@@ -764,6 +844,36 @@ wechat-local-interface --snapshot DIR --source-id ID contacts \
 wechat-local-interface --snapshot DIR --source-id ID conversations \
   [--query TEXT] [--kind person|group] [--has-messages|--no-has-messages]
 ```
+
+### `members`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID members CONVERSATION_ID \
+  [--query TEXT] [--friend|--no-friend] [--owner|--no-owner] [--limit N]
+```
+
+查询群成员、群主和好友状态。`--friend` 只保留 `friend_status=friend`，`--no-friend` 只保留明确的非好友；未知状态不会被强行归类。
+
+### `contact-groups`、`common-groups`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID contact-groups ACTOR_ID \
+  [--query TEXT] [--limit N]
+wechat-local-interface --snapshot DIR --source-id ID common-groups ACTOR_ID_1 ACTOR_ID_2 ... \
+  [--query TEXT] [--limit N]
+```
+
+`ACTOR_ID` 可以是 `actor_id`、微信 username 或唯一显示名。
+
+### `relations`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID relations \
+  [--subject ACTOR_ID] [--object CONVERSATION_ID] \
+  [--type member_of|owns] [--limit N]
+```
+
+输出统一关系边 JSON 数组；`--type` 可重复。
 
 ### `official`
 

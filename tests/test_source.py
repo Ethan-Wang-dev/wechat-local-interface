@@ -110,6 +110,13 @@ class WeChatSourceTests(unittest.TestCase):
         found = source.search_items("example.com/a")
         self.assertEqual(["第一条 https://example.com/a"], [row['text'] for row in found['items']])
 
+    def test_group_members_fallback_is_explicitly_incomplete(self):
+        source = self.source()
+        result = source.list_group_members(self.chat(source))
+        self.assertEqual("message_observed", result["membership_source"])
+        self.assertFalse(result["complete"])
+        self.assertEqual({"person-a", "my-account"}, {row["username"] for row in result["members"]})
+
     def test_filter_scope_is_bound_to_cursor_and_export(self):
         source = self.source(account_username="my-account")
         chat = self.chat(source)
@@ -315,6 +322,100 @@ class WeChatSourceTests(unittest.TestCase):
     @staticmethod
     def load(bundle, filename):
         return [json.loads(line) for line in (Path(bundle['path']) / filename).read_text().splitlines()]
+
+
+class WeChatRelationshipTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.root = self.base / "snapshot"
+        (self.root / "contact").mkdir(parents=True)
+        (self.root / "message").mkdir()
+        self.group = "100@chatroom"
+        self.table = "Msg_" + md5(self.group.encode()).hexdigest()
+        with sqlite3.connect(self.root / "contact/contact.db") as con:
+            con.execute("CREATE TABLE contact(id INTEGER PRIMARY KEY, username TEXT, nick_name TEXT, remark TEXT, local_type INTEGER, delete_flag INTEGER)")
+            con.executemany("INSERT INTO contact VALUES(?,?,?,?,?,?)", [
+                (100, self.group, "项目群", "", 2, 0),
+                (1, "person-a", "张三", "同事", 1, 0),
+                (2, "person-b", "李四", "", 3, 0),
+                (3, "my-account", "我", "", 1, 0),
+            ])
+            con.execute("CREATE TABLE chat_room(id INTEGER PRIMARY KEY, username TEXT, owner TEXT)")
+            con.execute("INSERT INTO chat_room VALUES(?,?,?)", (100, self.group, "person-a"))
+            con.execute("CREATE TABLE chatroom_member(room_id INTEGER, member_id INTEGER)")
+            con.executemany("INSERT INTO chatroom_member VALUES(?,?)", [(100, 1), (100, 2), (100, 3)])
+        with sqlite3.connect(self.root / "message/message_0.db") as con:
+            con.execute("CREATE TABLE Name2Id(user_name TEXT PRIMARY KEY, is_session INTEGER)")
+            con.executemany("INSERT INTO Name2Id VALUES(?,0)", [("person-a",), ("person-b",), ("my-account",)])
+            con.execute(f'CREATE TABLE "{self.table}"(local_id INTEGER PRIMARY KEY, server_id INTEGER, local_type INTEGER, real_sender_id INTEGER, create_time INTEGER, message_content BLOB, WCDB_CT_message_content INTEGER)')
+            con.executemany(f'INSERT INTO "{self.table}" VALUES(?,?,?,?,?,?,?)', [
+                (1, 11, 1, 1, 1700000000, "来自张三", 0),
+                (2, 12, 1, 2, 1700000001, "来自李四", 0),
+            ])
+
+    def source(self):
+        return WeChatSource(self.root, "relationships")
+
+    def test_group_members_contact_owner_and_reverse_edges(self):
+        source = self.source()
+        conversation_id = source.list_conversations()[0]["id"]
+        result = source.list_group_members(conversation_id)
+        self.assertEqual("contact_db", result["membership_source"])
+        self.assertTrue(result["complete"])
+        self.assertEqual(3, result["member_count"])
+        self.assertEqual("同事", result["owner"]["display_name"])
+        self.assertEqual(["同事", "我", "李四"], [row["display_name"] for row in result["members"]])
+        self.assertTrue(all(row["in_contact_database"] for row in result["members"]))
+        self.assertFalse(next(row for row in result["members"] if row["username"] == "person-b")["is_friend"])
+        self.assertEqual(["李四"], [row["display_name"] for row in source.list_group_members(conversation_id, is_friend=False, query="李")["members"]])
+        self.assertEqual(["同事"], [row["display_name"] for row in source.list_group_members(conversation_id, is_owner=True)["members"]])
+        actor = source.actor_id("person-b")
+        groups = source.list_contact_groups(actor)
+        self.assertEqual([conversation_id], [row["id"] for row in groups])
+        self.assertFalse(groups[0]["is_owner"])
+        relations = source.list_relationships(subject_id=actor)
+        self.assertEqual(["member_of"], [row["type"] for row in relations])
+        owner_rel = source.list_relationships(relationship_types=["owns"])
+        self.assertEqual(["person-a"], [row["subject"]["username"] for row in owner_rel])
+        common = source.list_common_groups([source.actor_id("person-a"), source.actor_id("person-b")])
+        self.assertEqual([conversation_id], [row["id"] for row in common])
+
+    def test_relationship_metadata_and_export(self):
+        source = self.source()
+        conversation = source.list_conversations()[0]
+        self.assertEqual(3, conversation["member_count"])
+        self.assertEqual("contact_db", conversation["membership_source"])
+        bundle = source.export_bundle(self.base / "export", [conversation["id"]])
+        relationships = self.load(bundle, "relationships.jsonl")
+        self.assertEqual(4, len(relationships))
+        self.assertEqual(4, bundle["manifest"]["counts"]["relationships"])
+        actors = self.load(bundle, "actors.jsonl")
+        self.assertEqual({"person-a", "person-b", "my-account"}, {row["username"] for row in actors})
+
+    def test_cli_relationship_commands(self):
+        source = self.source()
+        conversation_id = source.list_conversations()[0]["id"]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main(["--snapshot", str(self.root), "--source-id", "relationships", "members", conversation_id, "--friend"])
+        self.assertEqual(0, code)
+        self.assertEqual(2, json.loads(out.getvalue())["total_in_scope"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main(["--snapshot", str(self.root), "--source-id", "relationships", "contact-groups", "person-b"])
+        self.assertEqual(0, code)
+        self.assertEqual([conversation_id], [row["id"] for row in json.loads(out.getvalue())])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main(["--snapshot", str(self.root), "--source-id", "relationships", "common-groups", "person-a", "person-b"])
+        self.assertEqual(0, code)
+        self.assertEqual([conversation_id], [row["id"] for row in json.loads(out.getvalue())])
+
+    @staticmethod
+    def load(bundle, filename):
+        return [json.loads(line) for line in (Path(bundle["path"]) / filename).read_text().splitlines()]
 
 
 class WeChatSecondaryResourceTests(unittest.TestCase):

@@ -20,10 +20,30 @@ def parser() -> argparse.ArgumentParser:
     conversations.add_argument("--query")
     conversations.add_argument("--kind", action="append", choices=["person", "group"])
     conversations.add_argument("--has-messages", action=argparse.BooleanOptionalAction, default=None)
+    members = sub.add_parser("members", help="列出群成员及其联系人关系")
+    members.add_argument("conversation_id")
+    members.add_argument("--query")
+    members.add_argument("--friend", action=argparse.BooleanOptionalAction, default=None, help="只看本地标记为好友/非好友的成员；未知状态不匹配")
+    members.add_argument("--owner", action=argparse.BooleanOptionalAction, default=None, help="只看/排除群主")
+    members.add_argument("--limit", type=int, default=5000)
+    contact_groups = sub.add_parser("contact-groups", help="列出一个联系人所在的群聊")
+    contact_groups.add_argument("actor_id", help="actor_id、username 或唯一显示名")
+    contact_groups.add_argument("--query")
+    contact_groups.add_argument("--limit", type=int, default=1000)
+    common_groups = sub.add_parser("common-groups", help="列出多个联系人共同所在的群聊")
+    common_groups.add_argument("actor_id", nargs="+", help="至少两个 actor_id、username 或唯一显示名")
+    common_groups.add_argument("--query")
+    common_groups.add_argument("--limit", type=int, default=1000)
+    relations = sub.add_parser("relations", help="列出联系人与群聊之间的关系边")
+    relations.add_argument("--subject")
+    relations.add_argument("--object")
+    relations.add_argument("--type", action="append", choices=["member_of", "owns"])
+    relations.add_argument("--limit", type=int, default=5000)
     contacts = sub.add_parser("contacts", help="列出联系人和发言人")
     contacts.add_argument("--query")
     contacts.add_argument("--kind", action="append", choices=["person", "group"])
     contacts.add_argument("--subscription", action=argparse.BooleanOptionalAction, default=None)
+    contacts.add_argument("--friend", action=argparse.BooleanOptionalAction, default=None)
     contacts.add_argument("--limit", type=int, default=1000)
     official = sub.add_parser("official", help="列出公众号联系人和对应会话")
     official.add_argument("--query")
@@ -117,8 +137,16 @@ def main(argv: list[str] | None = None) -> int:
             output(source.status())
         elif args.command == "conversations":
             output(source.list_conversations(args.query, kinds=args.kind, has_messages=args.has_messages))
+        elif args.command == "members":
+            output(source.list_group_members(args.conversation_id, query=args.query, is_friend=args.friend, is_owner=args.owner, limit=args.limit))
+        elif args.command == "contact-groups":
+            output(source.list_contact_groups(args.actor_id, query=args.query, limit=args.limit))
+        elif args.command == "common-groups":
+            output(source.list_common_groups(args.actor_id, query=args.query, limit=args.limit))
+        elif args.command == "relations":
+            output(source.list_relationships(subject_id=args.subject, object_id=args.object, relationship_types=args.type, limit=args.limit))
         elif args.command == "contacts":
-            output(source.list_contacts(args.query, kinds=args.kind, is_subscription=args.subscription, limit=args.limit))
+            output(source.list_contacts(args.query, kinds=args.kind, is_subscription=args.subscription, is_friend=args.friend, limit=args.limit))
         elif args.command == "official":
             output(source.list_official_accounts(args.query, limit=args.limit))
         elif args.command == "search":

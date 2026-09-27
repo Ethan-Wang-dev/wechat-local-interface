@@ -185,9 +185,11 @@ class WeChatSource:
             raise ValueError("snapshot 包含不可读的 SQLite 数据库，请提供已解密快照") from exc
         self._catalog_stamp = self._source_stamp()
         self.contacts, self.contact_ids = self._load_contacts()
+        self._group_relationships = self._load_group_relationships()
         self._name2id_by_db: dict[str, dict[int, str]] = {}
         self._conversation_has_messages: dict[str, bool] = {}
         self._conversation_usernames = self._discover_conversations()
+        self._observed_members: dict[str, list[dict]] = {}
         self._conversation_by_id = {
             self.conversation_id(username): username for username in self._conversation_usernames
         }
@@ -288,8 +290,82 @@ class WeChatSource:
                     "alias": alias,
                     "is_group": "@chatroom" in username,
                     "is_subscription": bool(subscription_value) or username.startswith("gh_"),
+                    "local_type": self._optional_int(data.get("local_type")),
+                    "delete_flag": self._optional_int(data.get("delete_flag")),
                 }
         return contacts, ids
+
+    def _load_group_relationships(self) -> dict[str, dict]:
+        """Load chat-room membership edges from contact.db when available.
+
+        The Mac schema stores a chat room's numeric contact id in ``chat_room``
+        and its member contact ids in ``chatroom_member``.  Keeping this as a
+        separate catalog lets callers distinguish a complete contact-db list
+        from the message-observed fallback used by older/incomplete exports.
+        """
+        relationships: dict[str, dict] = {}
+        with self._connect(self.contact_db) as con:
+            if not (self._table_exists(con, "chat_room") and self._table_exists(con, "chatroom_member")):
+                return relationships
+            room_columns = {row[1] for row in con.execute("PRAGMA table_info(chat_room)")}
+            username_col = self._pick_column(room_columns, ("username", "userName", "user_name"))
+            owner_col = self._pick_column(room_columns, ("owner", "owner_username", "ownerUserName"))
+            if username_col is None or "id" not in room_columns:
+                return relationships
+            owner_expr = f'"{owner_col}"' if owner_col else "NULL"
+            query = f'SELECT "id", "{username_col}" AS username, {owner_expr} AS owner FROM "chat_room"'
+            member_columns = {row[1] for row in con.execute("PRAGMA table_info(chatroom_member)")}
+            room_id_col = self._pick_column(member_columns, ("room_id", "roomId"))
+            member_id_col = self._pick_column(member_columns, ("member_id", "memberId"))
+            if room_id_col is None or member_id_col is None:
+                return relationships
+            member_rows: dict[int, list[Any]] = {}
+            for row in con.execute(f'SELECT "{room_id_col}", "{member_id_col}" FROM "chatroom_member"'):
+                try:
+                    room_id = int(row[0])
+                except (TypeError, ValueError):
+                    continue
+                member_rows.setdefault(room_id, []).append(row[1])
+            for row in con.execute(query):
+                username = str(row["username"] or "")
+                if not username or "@chatroom" not in username:
+                    continue
+                try:
+                    room_id = int(row["id"])
+                except (TypeError, ValueError):
+                    continue
+                owner_username = str(row["owner"] or "") or None
+                members = []
+                seen: set[str] = set()
+                for raw_member_id in member_rows.get(room_id, []):
+                    try:
+                        numeric_id = int(raw_member_id)
+                        member_id = str(numeric_id)
+                        member_username = self.contact_ids.get(numeric_id)
+                    except (TypeError, ValueError):
+                        member_id = str(raw_member_id or "")
+                        member_username = member_id if member_id in self.contacts else None
+                    dedupe_key = member_username or f"id:{member_id}"
+                    if not member_id or dedupe_key in seen:
+                        continue
+                    seen.add(dedupe_key)
+                    members.append({
+                        "member_id": member_id,
+                        "username": member_username,
+                        "source": "contact_db",
+                        "provenance": {
+                            "database": "contact/contact.db",
+                            "table": "chatroom_member",
+                            "room_id": str(room_id),
+                        },
+                    })
+                relationships[username] = {
+                    "room_id": str(room_id),
+                    "owner_username": owner_username,
+                    "members": members,
+                    "membership_available": True,
+                }
+        return relationships
 
     def _discover_conversations(self) -> list[str]:
         found: set[str] = set()
@@ -313,6 +389,7 @@ class WeChatSource:
                 self._name2id_by_db[db.name] = db_name2id
                 tables_by_db[db.name] = [row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'")]
         known_usernames = set(self.contacts)
+        known_usernames.update(self._group_relationships)
         for sender_map in self._name2id_by_db.values():
             known_usernames.update(sender_map.values())
         hash_to_username = {_md5_username(username): username for username in known_usernames}
@@ -320,6 +397,9 @@ class WeChatSource:
             for table in tables:
                 if _MSG_TABLE_RE.fullmatch(table) and table[4:].lower() in hash_to_username:
                     found.add(hash_to_username[table[4:].lower()])
+        # Retain cached groups even if no message table was included in this
+        # snapshot. They still have useful member and owner relationships.
+        found.update(username for username in known_usernames if "@chatroom" in username)
         for username in found:
             table = "Msg_" + _md5_username(username)
             self._conversation_has_messages[username] = False
@@ -336,6 +416,9 @@ class WeChatSource:
             values.update(sender_map.values())
         if self.account_username:
             values.add(self.account_username)
+        for relationship in self._group_relationships.values():
+            if relationship.get("owner_username"):
+                values.add(relationship["owner_username"])
         return values
 
     def display_name(self, username: str) -> str:
@@ -349,13 +432,49 @@ class WeChatSource:
 
     def _actor_record(self, username: str) -> dict:
         contact = self.contacts.get(username, {})
+        group = "@chatroom" in username
         return {
             "id": self.actor_id(username),
             "username": username,
             "display_name": self.display_name(username),
-            "kind": "group" if contact.get("is_group") else "person",
-            "account_kind": "official_account" if contact.get("is_subscription") else ("group" if contact.get("is_group") else "person"),
+            "kind": "group" if group else "person",
+            "account_kind": "official_account" if contact.get("is_subscription") else ("group" if group else "person"),
             "is_subscription": bool(contact.get("is_subscription")),
+            "in_contact_database": username in self.contacts,
+            **self._friendship_record(username),
+        }
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _friendship_record(self, username: str) -> dict:
+        contact = self.contacts.get(username, {})
+        local_type = contact.get("local_type")
+        if username == self.account_username:
+            status, is_friend = "self", None
+        elif "@chatroom" in username or contact.get("is_subscription"):
+            status, is_friend = "not_applicable", None
+        elif contact.get("delete_flag") not in (None, 0):
+            status, is_friend = "deleted", False
+        elif local_type in (1, 5):
+            status, is_friend = "friend", True
+        elif local_type in (3, 6):
+            status, is_friend = "non_friend", False
+        else:
+            status, is_friend = "unknown", None
+        return {
+            "is_friend": is_friend,
+            "friend_status": status,
+            "is_self": username == self.account_username if self.account_username else None,
+            "friendship_evidence": {
+                "database": "contact/contact.db" if contact else None,
+                "local_type": local_type,
+                "delete_flag": contact.get("delete_flag"),
+            },
         }
 
     def status(self) -> dict:
@@ -369,11 +488,13 @@ class WeChatSource:
             "resource_index": self.resource_db.exists(),
             "favorite_index": self.favorite_db.exists(),
             "moments_index": self.sns_db.exists(),
+            "group_membership_index": bool(self._group_relationships),
+            "friendship_classification": any(c.get("local_type") in (1, 3, 5, 6) for c in self.contacts.values()),
             "decoders": {"utf8": True, "zstandard": zstd is not None},
             "snapshot_version": self._snapshot_token([], None, None),
             "capabilities": [
                 "contacts", "conversations", "messages", "search", "filters", "export",
-                "official_accounts", "favorites", "moments",
+                "official_accounts", "favorites", "moments", "group_members", "relationships",
             ],
             "limitations": ["no_media_body_decode", "no_network", "no_knowledge_store_write"],
         }
@@ -385,6 +506,7 @@ class WeChatSource:
         kinds: list[str] | None = None,
         has_messages: bool | None = None,
     ) -> list[dict]:
+        snapshot = self._snapshot_token([], None, None)
         normalized_kinds = self._normalize_choice_filter(kinds, _CONTACT_KINDS, "conversation kind")
         q = query.casefold() if query else ""
         rows = []
@@ -398,6 +520,7 @@ class WeChatSource:
                 continue
             if q and q not in display.casefold() and q not in username.casefold():
                 continue
+            relationship = self._group_relationships.get(username) if kind == "group" else None
             rows.append({
                 "id": self.conversation_id(username),
                 "display_name": display,
@@ -406,8 +529,275 @@ class WeChatSource:
                 "is_official": bool(username.startswith("gh_") or self.contacts.get(username, {}).get("is_subscription")),
                 "message_table": "Msg_" + _md5_username(username),
                 "has_messages": conversation_has_messages,
+                "member_count": len(relationship["members"]) if relationship and relationship.get("membership_available") else None,
+                "owner_actor_id": self.actor_id(relationship["owner_username"])
+                if relationship and relationship.get("owner_username") else None,
+                "membership_source": "contact_db" if relationship and relationship.get("membership_available") else None,
             })
+        if self._snapshot_token([], None, None) != snapshot:
+            raise ValueError("读取期间 snapshot 已变化，请使用稳定的快照重试")
         return rows
+
+    def list_group_members(
+        self,
+        conversation_id: str,
+        *,
+        query: str | None = None,
+        is_friend: bool | None = None,
+        is_owner: bool | None = None,
+        limit: int = 5000,
+    ) -> dict:
+        """List cached group members with local friendship classification."""
+        snapshot = self._snapshot_token([], None, None)
+        if not 1 <= limit <= 5000:
+            raise ValueError("limit 必须在 1 到 5000 之间")
+        username = self._conversation_by_id.get(conversation_id)
+        if not username:
+            raise ValueError(f"未知 conversation_id: {conversation_id}")
+        if "@chatroom" not in username:
+            raise ValueError("conversation_id 必须指向群聊")
+        members, source, complete, owner_username = self._members_for_group(username)
+        q = query.casefold().strip() if query else ""
+        rows = []
+        for member in members:
+            member_username = member.get("username")
+            owner = bool(owner_username and member_username == owner_username)
+            friendship = self._friendship_record(member_username or "")
+            display = self.display_name(member_username) if member_username else member.get("member_id", "")
+            if is_friend is not None and friendship["is_friend"] is not is_friend:
+                continue
+            if is_owner is not None and owner is not is_owner:
+                continue
+            if q and q not in display.casefold() and q not in str(member_username or "").casefold():
+                continue
+            rows.append({
+                "member_id": str(member.get("member_id") or ""),
+                "actor_id": self.actor_id(member_username) if member_username else None,
+                "username": member_username,
+                "display_name": display,
+                "in_contact_database": bool(member_username and member_username in self.contacts),
+                **friendship,
+                "is_owner": owner,
+                "provenance": member.get("provenance", {}),
+            })
+        rows.sort(key=lambda row: (not row["is_owner"], row["display_name"].casefold(), row["member_id"]))
+        all_count = len(members)
+        conversation = self._conversation_record(conversation_id)
+        owner = self._actor_record(owner_username) if owner_username else None
+        if owner:
+            owner["is_owner"] = True
+        counts = {key: 0 for key in ("friend", "non_friend", "unknown", "self", "deleted", "not_applicable")}
+        for member in members:
+            counts[self._friendship_record(member.get("username") or "")["friend_status"]] += 1
+        if self._snapshot_token([], None, None) != snapshot:
+            raise ValueError("读取期间 snapshot 已变化，请使用稳定的快照重试")
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "source_id": self.source_id,
+            "conversation": conversation,
+            "owner": owner,
+            "member_count": all_count,
+            "total_in_scope": len(rows),
+            "members": rows[:limit],
+            "membership_source": source,
+            "complete": complete,
+            "friend_counts": counts,
+        }
+
+    def list_contact_groups(
+        self,
+        actor_id: str,
+        *,
+        query: str | None = None,
+        limit: int = 1000,
+    ) -> list[dict]:
+        """Return groups containing one actor, resolved by actor id or username."""
+        snapshot = self._snapshot_token([], None, None)
+        if not 1 <= limit <= 5000:
+            raise ValueError("limit 必须在 1 到 5000 之间")
+        username = self._resolve_actor_username(actor_id)
+        rows = self._contact_group_rows(username, query)
+        if self._snapshot_token([], None, None) != snapshot:
+            raise ValueError("读取期间 snapshot 已变化，请使用稳定的快照重试")
+        return rows[:limit]
+
+    def _contact_group_rows(self, username: str, query: str | None) -> list[dict]:
+        q = query.casefold().strip() if query else ""
+        rows = []
+        for group_username in self._conversation_usernames:
+            if "@chatroom" not in group_username:
+                continue
+            members, source, complete, owner_username = self._members_for_group(group_username)
+            match = next((item for item in members if item.get("username") == username), None)
+            if match is None:
+                continue
+            display = self.display_name(group_username)
+            if q and q not in display.casefold() and q not in group_username.casefold():
+                continue
+            conversation = self._conversation_record(self.conversation_id(group_username))
+            rows.append({
+                **conversation,
+                "is_owner": username == owner_username,
+                "membership_source": source,
+                "complete": complete,
+            })
+        rows.sort(key=lambda row: (row["display_name"].casefold(), row["id"]))
+        return rows
+
+    def list_common_groups(
+        self,
+        actor_ids: list[str],
+        *,
+        query: str | None = None,
+        limit: int = 1000,
+    ) -> list[dict]:
+        """Return locally known groups containing every selected actor."""
+        snapshot = self._snapshot_token([], None, None)
+        if not 1 <= limit <= 5000:
+            raise ValueError("limit 必须在 1 到 5000 之间")
+        usernames = {self._resolve_actor_username(value) for value in actor_ids}
+        if len(usernames) < 2:
+            raise ValueError("至少选择两个不同的联系人")
+        # Each reverse lookup shares the immutable catalog and observation
+        # cache; intersect group ids without inferring missing membership.
+        common: set[str] | None = None
+        groups = {}
+        for username in sorted(usernames):
+            rows = self._contact_group_rows(username, query)
+            by_id = {row["id"]: row for row in rows}
+            common = set(by_id) if common is None else common & set(by_id)
+            groups.update(by_id)
+        rows = [{key: value for key, value in groups[cid].items() if key != "is_owner"} for cid in common or set()]
+        rows.sort(key=lambda row: (row["display_name"].casefold(), row["id"]))
+        if self._snapshot_token([], None, None) != snapshot:
+            raise ValueError("读取期间 snapshot 已变化，请使用稳定的快照重试")
+        return rows[:limit]
+
+    def list_relationships(
+        self,
+        *,
+        subject_id: str | None = None,
+        object_id: str | None = None,
+        relationship_types: list[str] | None = None,
+        limit: int = 5000,
+    ) -> list[dict]:
+        """Return normalized actor-to-group relationship edges.
+
+        Current edge types are ``member_of`` and ``owns``.  The shape is kept
+        generic so future contacts, messages, and resource relations can use
+        the same object graph without changing the identifier contract.
+        """
+        if not 1 <= limit <= 5000:
+            raise ValueError("limit 必须在 1 到 5000 之间")
+        snapshot = self._snapshot_token([], None, None)
+        allowed = {"member_of", "owns"}
+        types = self._normalize_choice_filter(relationship_types, allowed, "relationship type")
+        subject_username = self._resolve_actor_username(subject_id) if subject_id else None
+        if object_id:
+            usernames = self._resolve_usernames([object_id])
+            if "@chatroom" not in usernames[0]:
+                raise ValueError("object_id 必须指向群聊")
+        else:
+            usernames = self._conversation_usernames
+        rows = self._relationship_rows(usernames)
+        rows = [row for row in rows if
+                (not types or row["type"] in types) and
+                (not subject_username or row["subject_id"] == self.actor_id(subject_username))]
+        if self._snapshot_token([], None, None) != snapshot:
+            raise ValueError("读取期间 snapshot 已变化，请使用稳定的快照重试")
+        return rows[:limit]
+
+    def _relationship_rows(self, usernames: list[str]) -> list[dict]:
+        rows = []
+        for group_username in usernames:
+            if "@chatroom" not in group_username:
+                continue
+            conversation_id = self.conversation_id(group_username)
+            members, source, complete, owner_username = self._members_for_group(group_username)
+            endpoints = []
+            for member in members:
+                member_username = member.get("username")
+                if not member_username:
+                    continue
+                endpoints.append(("member_of", member_username, member.get("provenance", {}), source, complete))
+            if owner_username:
+                endpoints.append(("owns", owner_username, {
+                    "database": "contact/contact.db", "table": "chat_room",
+                    "room_id": self._group_relationships[group_username]["room_id"],
+                }, "contact_db", True))
+            for relation_type, member_username, provenance, edge_source, edge_complete in endpoints:
+                actor_id = self.actor_id(member_username)
+                rows.append({
+                    "id": _opaque(self.source_id, "relationship", f"{relation_type}:{actor_id}:{conversation_id}"),
+                    "type": relation_type,
+                    "subject_id": actor_id,
+                    "object_id": conversation_id,
+                    "subject": self._actor_record(member_username),
+                    "object": self._conversation_record(conversation_id),
+                    "membership_source": edge_source,
+                    "complete": edge_complete,
+                    "provenance": provenance,
+                })
+        rows.sort(key=lambda row: (row["object_id"], row["type"], row["subject_id"]))
+        return rows
+
+    def _members_for_group(self, username: str) -> tuple[list[dict], str, bool, str | None]:
+        relationship = self._group_relationships.get(username)
+        owner_username = relationship.get("owner_username") if relationship else None
+        if relationship and relationship.get("membership_available"):
+            return list(relationship.get("members", [])), "contact_db", True, owner_username
+        if username in self._observed_members:
+            rows = self._observed_members[username]
+            return rows, "message_observed" if rows else "unavailable", False, owner_username
+        # A few old exports omit contact membership tables.  Preserve useful
+        # information by returning distinct senders observed in this group's
+        # message table and explicitly mark the result incomplete.
+        observed: dict[str, dict] = {}
+        table = "Msg_" + _md5_username(username)
+        for db in self.message_dbs:
+            with self._connect(db) as con:
+                if not self._table_exists(con, table):
+                    continue
+                columns = {row[1] for row in con.execute(f'PRAGMA table_info("{table}")')}
+                sender_col = self._pick_column(columns, ("real_sender_id", "sender_id"))
+                if not sender_col:
+                    continue
+                for row in con.execute(f'SELECT DISTINCT "{sender_col}" FROM "{table}" WHERE "{sender_col}" IS NOT NULL'):
+                    try:
+                        sender_id = int(row[0])
+                    except (TypeError, ValueError):
+                        continue
+                    member_username = self._name2id_by_db.get(db.name, {}).get(sender_id)
+                    if not member_username or "@chatroom" in member_username:
+                        continue
+                    observed.setdefault(member_username, {
+                        "member_id": str(sender_id),
+                        "username": member_username,
+                        "source": "message_observed",
+                        "provenance": {
+                            "database": f"message/{db.name}",
+                            "table": table,
+                        },
+                    })
+        self._observed_members[username] = list(observed.values())
+        return self._observed_members[username], "message_observed" if observed else "unavailable", False, owner_username
+
+    def _resolve_actor_username(self, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("actor_id 不能为空")
+        candidate = value.strip()
+        known = self._known_actor_usernames()
+        if candidate in known:
+            return candidate
+        for username in known:
+            if self.actor_id(username) == candidate:
+                return username
+        matches = [username for username in known if self.display_name(username).casefold() == candidate.casefold()]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError(f"联系人名称不唯一，请使用 actor_id 或 username: {candidate}")
+        raise ValueError(f"未知 actor_id 或 username: {candidate}")
 
     def list_contacts(
         self,
@@ -415,9 +805,11 @@ class WeChatSource:
         *,
         kinds: list[str] | None = None,
         is_subscription: bool | None = None,
+        is_friend: bool | None = None,
         limit: int = 1000,
     ) -> list[dict]:
         """List actors known by the contact database or message sender maps."""
+        snapshot = self._snapshot_token([], None, None)
         if not 1 <= limit <= 5000:
             raise ValueError("limit 必须在 1 到 5000 之间")
         normalized_kinds = self._normalize_choice_filter(kinds, _CONTACT_KINDS, "contact kind")
@@ -429,10 +821,14 @@ class WeChatSource:
                 continue
             if is_subscription is not None and record["is_subscription"] is not is_subscription:
                 continue
+            if is_friend is not None and record["is_friend"] is not is_friend:
+                continue
             if q and q not in self.display_name(username).casefold() and q not in username.casefold():
                 continue
             rows.append(record)
         rows.sort(key=lambda row: (row["display_name"].casefold(), row["id"]))
+        if self._snapshot_token([], None, None) != snapshot:
+            raise ValueError("读取期间 snapshot 已变化，请使用稳定的快照重试")
         return rows[:limit]
 
     def list_official_accounts(self, query: str | None = None, *, limit: int = 1000) -> list[dict]:
@@ -1051,6 +1447,10 @@ class WeChatSource:
             raise ValueError("读取期间 snapshot 已变化，请使用稳定的快照重试")
         actors = {item["author_id"] for item in items if item.get("author_id")}
         conversations = {self.conversation_id(username) for username in usernames}
+        relationships = self._relationship_rows(usernames)
+        if self._snapshot_token(usernames, start, end, filters) != snapshot:
+            raise ValueError("读取期间 snapshot 已变化，请使用稳定的快照重试")
+        actors.update(row["subject_id"] for row in relationships)
         manifest = {
             "schema_version": SCHEMA_VERSION,
             "source_id": self.source_id,
@@ -1064,7 +1464,7 @@ class WeChatSource:
                 "end": end,
                 "filters": filters,
             },
-            "counts": {"items": len(items), "actors": len(actors), "conversations": len(conversations), "duplicate_observations": 0},
+            "counts": {"items": len(items), "actors": len(actors), "conversations": len(conversations), "relationships": len(relationships), "duplicate_observations": 0},
             "limitations": ["media_body_not_decoded", "source_is_untrusted_data"],
         }
         if previous:
@@ -1109,10 +1509,12 @@ class WeChatSource:
             "missing_from_previous": len(set(old_by_id) - set(new_by_id)),
         })
         actors = {item["author_id"] for item in items if item.get("author_id")}
+        actors.update(row["subject_id"] for row in relationships)
         manifest["counts"]["actors"] = len(actors)
         try:
             self._write_jsonl(output / "actors.jsonl", [self.actors[actor_id] for actor_id in sorted(actors)])
             self._write_jsonl(output / "conversations.jsonl", [self._conversation_record(cid) for cid in sorted(conversations)])
+            self._write_jsonl(output / "relationships.jsonl", relationships)
             self._write_jsonl(output / "items.jsonl", items)
             self._write_jsonl(output / "changes.jsonl", changes)
             self._write_json(output / "manifest.json", manifest)
@@ -1123,7 +1525,17 @@ class WeChatSource:
 
     def _conversation_record(self, conversation_id: str) -> dict:
         username = self._conversation_by_id[conversation_id]
-        return {"id": conversation_id, "display_name": self.display_name(username), "kind": "group" if "@chatroom" in username else "person"}
+        kind = "group" if "@chatroom" in username else "person"
+        relationship = self._group_relationships.get(username) if kind == "group" else None
+        return {
+            "id": conversation_id,
+            "display_name": self.display_name(username),
+            "kind": kind,
+            "member_count": len(relationship["members"]) if relationship and relationship.get("membership_available") else None,
+            "owner_actor_id": self.actor_id(relationship["owner_username"])
+            if relationship and relationship.get("owner_username") else None,
+            "membership_source": "contact_db" if relationship and relationship.get("membership_available") else None,
+        }
 
     @staticmethod
     def _validate_bounds(start: str | None, end: str | None) -> None:
