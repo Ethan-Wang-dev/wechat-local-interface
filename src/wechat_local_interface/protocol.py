@@ -51,6 +51,8 @@ OPERATION_FIELDS: dict[str, frozenset[str]] = {
     "moments.export": frozenset(_COLLECTION_EXPORT_FILTERS | {"output", "previous"}),
     "moments.interactions": frozenset({"feed_id", "author_usernames", "unread_only", "limit"}),
     "events.list": frozenset({"kind", "limit"}),
+    "assets.list": frozenset({"kind", "limit"}),
+    "emoticons.list": frozenset({"limit"}),
     "search.all": frozenset({"query", "scopes", "start", "end", "limit"}),
 }
 
@@ -245,6 +247,10 @@ class WeChatProtocol:
             return self.source.list_moment_interactions(**params)
         if operation == "events.list":
             return self.source.list_special_events(**params)
+        if operation == "assets.list":
+            return self.source.list_media_assets(**params)
+        if operation == "emoticons.list":
+            return self.source.list_emoticons(**params)
         if operation == "search.all":
             query = params.pop("query")
             return self.source.search_all(query, **params)

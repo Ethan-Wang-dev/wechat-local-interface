@@ -219,6 +219,9 @@ class WeChatSource:
         self.sns_db = self.root / "sns" / "sns.db"
         self.session_db = self.root / "session" / "session.db"
         self.general_db = self.root / "general" / "general.db"
+        self.hardlink_db = self.root / "hardlink" / "hardlink.db"
+        self.head_image_db = self.root / "head_image" / "head_image.db"
+        self.emoticon_db = self.root / "emoticon" / "emoticon.db"
         try:
             self._validate_snapshot()
         except sqlite3.Error as exc:
@@ -249,7 +252,7 @@ class WeChatSource:
             raise ValueError("缺少 contact/contact.db")
         if not self.message_dbs:
             raise ValueError("缺少 message/message_<数字>.db 或 biz_message_<数字>.db")
-        optional_dbs = [db for db in (self.resource_db, self.favorite_db, self.sns_db, self.session_db, self.general_db) if db.exists()]
+        optional_dbs = [db for db in (self.resource_db, self.favorite_db, self.sns_db, self.session_db, self.general_db, self.hardlink_db, self.head_image_db, self.emoticon_db) if db.exists()]
         for db in [self.contact_db, *self.message_dbs, *optional_dbs]:
             if not db.exists():
                 continue
@@ -280,7 +283,7 @@ class WeChatSource:
 
     @staticmethod
     def _check_no_links(root: Path) -> None:
-        for path in (root, root / "contact", root / "message", root / "favorite", root / "sns", root / "session", root / "general"):
+        for path in (root, root / "contact", root / "message", root / "favorite", root / "sns", root / "session", root / "general", root / "hardlink", root / "head_image", root / "emoticon"):
             if path.exists() and path.is_symlink():
                 raise ValueError(f"不接受符号链接路径: {path}")
             if path.is_dir():
@@ -594,13 +597,15 @@ class WeChatSource:
             "moments_index": self.sns_db.exists(),
             "session_index": self.session_db.exists(),
             "general_event_index": self.general_db.exists(),
+            "media_index": self.hardlink_db.exists() or self.head_image_db.exists(),
+            "emoticon_index": self.emoticon_db.exists(),
             "group_membership_index": bool(self._group_relationships),
             "friendship_classification": any(c.get("local_type") in (1, 3, 5, 6) for c in self.contacts.values()),
             "decoders": {"utf8": True, "zstandard": zstd is not None},
             "snapshot_version": self._snapshot_token([], None, None),
             "capabilities": [
                 "contacts", "conversations", "messages", "search", "filters", "export",
-                "official_accounts", "favorites", "favorite_tags", "moments", "moment_interactions", "group_members", "relationships", "contact_labels", "sessions", "special_events",
+                "official_accounts", "favorites", "favorite_tags", "moments", "moment_interactions", "group_members", "relationships", "contact_labels", "sessions", "special_events", "media_assets", "emoticons",
             ],
             "limitations": ["no_media_body_decode", "no_network", "no_knowledge_store_write"],
         }
@@ -1137,6 +1142,35 @@ class WeChatSource:
                 for row in con.execute(f'SELECT * FROM "{table}" ORDER BY rowid DESC LIMIT ?', (limit,)):
                     rows.append({"resource_type": "special_event", "event_type": event_kind, "metadata": {key: _metadata_value(value) for key, value in dict(row).items()}})
         return rows[:limit]
+
+    def list_media_assets(self, kind: str | None = None, *, limit: int = 1000) -> list[dict]:
+        """List local file/image/video and avatar index rows without opening media."""
+        if not 1 <= limit <= 5000:
+            raise ValueError("limit 必须在 1 到 5000 之间")
+        tables = {"file": "file_hardlink_info_v4", "image": "image_hardlink_info_v4", "video": "video_hardlink_info_v4"}
+        rows = []
+        if self.hardlink_db.exists():
+            with self._connect(self.hardlink_db) as con:
+                for asset_kind, table in tables.items():
+                    if kind and kind != asset_kind or not self._table_exists(con, table):
+                        continue
+                    for row in con.execute(f'SELECT * FROM "{table}" LIMIT ?', (limit,)):
+                        rows.append({"resource_type": "media_asset", "kind": asset_kind, "metadata": {key: _metadata_value(value) for key, value in dict(row).items()}})
+        if (not kind or kind == "avatar") and self.head_image_db.exists():
+            with self._connect(self.head_image_db) as con:
+                if self._table_exists(con, "head_image"):
+                    for row in con.execute("SELECT username, md5, update_time, length(image_buffer) AS image_size FROM head_image LIMIT ?", (limit,)):
+                        rows.append({"resource_type": "media_asset", "kind": "avatar", "metadata": {key: _metadata_value(value) for key, value in dict(row).items()}})
+        return rows[:limit]
+
+    def list_emoticons(self, *, limit: int = 1000) -> list[dict]:
+        if not self.emoticon_db.exists():
+            return []
+        with self._connect(self.emoticon_db) as con:
+            table = "kStoreEmoticonPackageTable"
+            if not self._table_exists(con, table):
+                return []
+            return [{"resource_type": "emoticon_package", "metadata": {key: _metadata_value(value) for key, value in dict(row).items()}} for row in con.execute(f'SELECT * FROM "{table}" LIMIT ?', (limit,))]
 
     def search_all(self, query: str, *, scopes: list[str] | None = None, start: str | None = None, end: str | None = None, limit: int = 100) -> dict:
         """Search messages, favorites, and moments using one stable envelope."""
@@ -1930,7 +1964,7 @@ class WeChatSource:
         # connector whose contact and sender catalogs were already loaded.
         paths = sorted(p for p in self.message_dir.iterdir() if _TABLE_RE.fullmatch(p.name))
         source_paths = [*paths, self.contact_db]
-        for optional_db in (self.resource_db, self.favorite_db, self.sns_db, self.session_db, self.general_db):
+        for optional_db in (self.resource_db, self.favorite_db, self.sns_db, self.session_db, self.general_db, self.hardlink_db, self.head_image_db, self.emoticon_db):
             if optional_db.exists():
                 source_paths.append(optional_db)
         parts = []

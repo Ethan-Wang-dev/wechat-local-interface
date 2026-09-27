@@ -69,6 +69,11 @@ def parser() -> argparse.ArgumentParser:
     events = sub.add_parser("events", help="列出红包、转账等特殊事件")
     events.add_argument("--kind", choices=["red_envelope", "transfer", "friend_request", "revoked_message"])
     events.add_argument("--limit", type=int, default=1000)
+    assets = sub.add_parser("assets", help="列出本地媒体索引")
+    assets.add_argument("--kind", choices=["file", "image", "video", "avatar"])
+    assets.add_argument("--limit", type=int, default=1000)
+    emoticons = sub.add_parser("emoticons", help="列出表情包索引")
+    emoticons.add_argument("--limit", type=int, default=1000)
 
     search = sub.add_parser("search", help="搜索消息、收藏夹或朋友圈")
     search.add_argument("query")
@@ -196,6 +201,10 @@ def main(argv: list[str] | None = None) -> int:
             output(source.list_moment_interactions(feed_id=args.feed_id, author_usernames=args.author, unread_only=args.unread_only, limit=args.limit))
         elif args.command == "events":
             output(source.list_special_events(args.kind, limit=args.limit))
+        elif args.command == "assets":
+            output(source.list_media_assets(args.kind, limit=args.limit))
+        elif args.command == "emoticons":
+            output(source.list_emoticons(limit=args.limit))
         elif args.command == "search":
             if args.scope == "messages":
                 filters = _filters(args, include_query=False)

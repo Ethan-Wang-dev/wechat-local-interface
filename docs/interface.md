@@ -984,3 +984,8 @@ wechat-local-interface --snapshot DIR --source-id ID favorites|moments \
 联系人记录的 `metadata` 包含头像、拼音、验证状态、群内状态等原始列；群会话
 包含 `group_metadata`；消息记录包含 `storage`，用于查询 SQLite 中的排序、投递
 和来源状态。二进制扩展字段只返回大小和 SHA-256，不返回原始二进制内容。
+
+- `assets.list`：文件、图片、视频和头像的本地索引；
+- `emoticons.list`：本地表情包包信息。
+
+媒体接口只读 SQLite 索引，不读取媒体正文，也不会访问网络。
