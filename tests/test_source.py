@@ -339,16 +339,16 @@ class WeChatSecondaryResourceTests(unittest.TestCase):
             con.execute(f'CREATE TABLE "{table}"(local_id INTEGER PRIMARY KEY, server_id INTEGER, local_type INTEGER, real_sender_id INTEGER, create_time INTEGER, message_content BLOB, WCDB_CT_message_content INTEGER)')
             con.execute(f'INSERT INTO "{table}" VALUES(?,?,?,?,?,?,?)', (1, 10, 1, 0, 1700000000, "公众号消息", 0))
         with sqlite3.connect(self.root / "favorite/favorite.db") as con:
-            con.execute("CREATE TABLE fav_db_item(local_id INTEGER, type INTEGER, update_time INTEGER, content TEXT, fromusr TEXT, realchatname TEXT)")
-            con.executemany("INSERT INTO fav_db_item VALUES(?,?,?,?,?,?)", [
-                (1, 1, 1700000000, "<favitem><desc>要记住的收藏</desc></favitem>", "person-a", "群聊"),
-                (2, 5, 1700000100, "<favitem><item><pagetitle>一篇文章</pagetitle><desc>收藏文章正文</desc><url>https://example.com/article</url></item></favitem>", "person-a", "群聊"),
+            con.execute("CREATE TABLE fav_db_item(local_id INTEGER, type INTEGER, update_time INTEGER, content TEXT, fromusr TEXT, realchatname TEXT, ext_buf TEXT)")
+            con.executemany("INSERT INTO fav_db_item VALUES(?,?,?,?,?,?,?)", [
+                (1, 1, 1700000000, "<favitem><desc>要记住的收藏</desc></favitem>", "person-a", "群聊", b"\\xff\\xfe"),
+                (2, 5, 1700000100, "<favitem><item><pagetitle>一篇文章</pagetitle><desc>收藏文章正文</desc><url>https://example.com/article</url></item></favitem>", "person-a", "群聊", b"\\xff\\xfe"),
             ])
         with sqlite3.connect(self.root / "sns/sns.db") as con:
-            con.execute("CREATE TABLE SnsTimeLine(tid INTEGER, user_name TEXT, content TEXT)")
-            con.executemany("INSERT INTO SnsTimeLine VALUES(?,?,?)", [
-                (11, "person-a", "<TimelineObject><username>person-a</username><createTime>1700000200</createTime><contentDesc>朋友圈干货</contentDesc></TimelineObject>"),
-                (12, "person-a", "<TimelineObject><username>person-a</username><createTime>1700000300</createTime><contentDesc>带链接</contentDesc><ContentObject><contentUrl>https://example.com/moment</contentUrl></ContentObject></TimelineObject>"),
+            con.execute("CREATE TABLE SnsTimeLine(tid INTEGER, user_name TEXT, content TEXT, pack_info_buf TEXT)")
+            con.executemany("INSERT INTO SnsTimeLine VALUES(?,?,?,?)", [
+                (11, "person-a", "<TimelineObject><username>person-a</username><createTime>1700000200</createTime><contentDesc>朋友圈干货</contentDesc></TimelineObject>", b"\\xff\\xfe"),
+                (12, "person-a", "<TimelineObject><username>person-a</username><createTime>1700000300</createTime><contentDesc>带链接</contentDesc><ContentObject><contentUrl>https://example.com/moment</contentUrl></ContentObject></TimelineObject>", b"\\xff\\xfe"),
             ])
 
     def source(self):

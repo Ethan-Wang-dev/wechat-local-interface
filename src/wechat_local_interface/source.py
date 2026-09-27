@@ -600,6 +600,15 @@ class WeChatSource:
         return default
 
     @staticmethod
+    def _pick_column(columns: set[str], aliases: tuple[str, ...]) -> str | None:
+        by_lower = {column.casefold(): column for column in columns}
+        return next((by_lower[name.casefold()] for name in aliases if name.casefold() in by_lower), None)
+
+    @staticmethod
+    def _quote_identifier(value: str) -> str:
+        return '"' + value.replace('"', '""') + '"'
+
+    @staticmethod
     def _epoch(value: Any) -> int:
         try:
             timestamp = int(value or 0)
@@ -721,7 +730,20 @@ class WeChatSource:
         with self._connect(self.favorite_db) as con:
             if not self._table_exists(con, "fav_db_item"):
                 raise ValueError("favorite.db 缺少 fav_db_item 表")
-            for row in con.execute('SELECT rowid AS __rowid__, * FROM "fav_db_item"'):
+            columns = {row[1] for row in con.execute('PRAGMA table_info("fav_db_item")')}
+            selected = ['rowid AS __rowid__']
+            column_aliases = {
+                "local_id": ("local_id", "localId", "id"),
+                "type": ("type", "fav_type"),
+                "update_time": ("update_time", "updateTime", "create_time", "timestamp", "time"),
+                "content": ("content", "fav_content", "favContent", "data"),
+                "fromusr": ("fromusr", "from_user", "fromUser"),
+                "realchatname": ("realchatname", "real_chat_name", "chat_name"),
+            }
+            for alias, names in column_aliases.items():
+                column = self._pick_column(columns, names)
+                selected.append(f'{self._quote_identifier(column)} AS "{alias}"' if column else f'NULL AS "{alias}"')
+            for row in con.execute(f'SELECT {", ".join(selected)} FROM "fav_db_item"'):
                 local_id = str(self._row_value(row, ("local_id", "localId", "id"), row["__rowid__"]))
                 fav_type = int(self._row_value(row, ("type", "fav_type"), 0) or 0)
                 timestamp = self._epoch(self._row_value(row, ("update_time", "updateTime", "create_time", "timestamp", "time"), 0))
@@ -779,7 +801,17 @@ class WeChatSource:
         with self._connect(self.sns_db) as con:
             if not self._table_exists(con, "SnsTimeLine"):
                 raise ValueError("sns.db 缺少 SnsTimeLine 表")
-            for row in con.execute('SELECT rowid AS __rowid__, * FROM "SnsTimeLine"'):
+            columns = {row[1] for row in con.execute('PRAGMA table_info("SnsTimeLine")')}
+            tid_column = self._pick_column(columns, ("tid", "id"))
+            username_column = self._pick_column(columns, ("user_name", "username", "userName"))
+            content_column = self._pick_column(columns, ("content", "xml", "content_xml"))
+            if content_column is None:
+                raise ValueError("sns.db 的 SnsTimeLine 表缺少 content/xml 字段")
+            selected = ['rowid AS __rowid__']
+            selected.append(f'{self._quote_identifier(tid_column)} AS "tid"' if tid_column else 'NULL AS "tid"')
+            selected.append(f'{self._quote_identifier(username_column)} AS "user_name"' if username_column else 'NULL AS "user_name"')
+            selected.append(f'{self._quote_identifier(content_column)} AS "content"')
+            for row in con.execute(f'SELECT {", ".join(selected)} FROM "SnsTimeLine"'):
                 local_id = str(self._row_value(row, ("tid", "id"), row["__rowid__"]))
                 db_username = str(self._row_value(row, ("user_name", "username", "userName"), "") or "")
                 raw = self._row_value(row, ("content", "xml", "content_xml"), "")

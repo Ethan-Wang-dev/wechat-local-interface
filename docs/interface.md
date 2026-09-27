@@ -150,6 +150,7 @@ source.read_items(
 - 收藏夹和朋友圈按创建/更新时间降序返回；同一时间按稳定 ID 排序。
 - `list_contacts()` 和 `list_official_accounts()` 的默认 `limit` 为 `1000`，允许范围也是 `1–5000`。
 - `list_conversations()` 不使用分页，返回当前发现的全部会话。
+- 收藏夹和朋友圈的查询会先扫描当前筛选范围，再排序并切出 `limit` 条；`limit` 控制返回量，不等于数据库扫描量。数据量较大时应尽量提供 `start`/`end` 或更窄的作者/类型条件。
 
 ### 3.5 常见错误
 
