@@ -1,0 +1,14 @@
+name: replace-me
+version: 0.1.0
+description: 用一句话说明这个 Skill 解决什么问题
+triggers:
+  - 用户可能怎样提出请求
+reads:
+  - local_wechat_interface
+writes:
+  - local_files
+outputs:
+  - media_type: text/markdown
+    description: 人工可读结果
+network: false
+model: optional

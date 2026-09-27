@@ -71,6 +71,16 @@ favorite / moment ─────▶ actor
 
 `in_contact_database` 只表示存在联系人行，不能单独当作好友结论。
 
+## Skill Gallery
+
+底层接口负责查询和导出标准化微信数据，上层 Skill 可以完成分析、转换、可视化和自动化任务。Skill 的输入和输出保持开放：可以返回文字、JSON、Markdown、HTML、图片、PDF 或一组文件。
+
+- [`skills/`](skills/)：Skill Gallery 和提交模板；
+- [`docs/skill-architecture.md`](docs/skill-architecture.md)：输入、输出、内容封装和组合方式；
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)：提交新的 Skill、渲染器和导出适配器。
+
+需要跨 Skill 传递结构化结果时，可以选择 [`wechat.content.v1`](schemas/wechat.content.v1.json) 内容封装。它只规定通用元数据和产物引用，不限制具体分析结构。
+
 ## 获取已解密快照
 
 本项目需要一个已经解密的微信数据库快照。可以使用外部的 [`yichen-wechat-local-vault` Skill](https://github.com/mcncarl/yichen-skills/tree/main/yichen-wechat-local-vault) 完成 Mac 微信数据库的密钥提取、全量解密和增量刷新，再把稳定快照目录传给本项目。
