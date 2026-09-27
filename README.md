@@ -89,6 +89,19 @@ wechat-local-interface --snapshot ./wechat-snapshot --source-id my-wechat \
 
 完整 CLI 参数和 Python 接口规范见 [`docs/interface.md`](docs/interface.md)。
 
+## 语言无关协议
+
+如果 Mousia 或其他程序不是 Python，使用统一的 JSON/NDJSON 协议，不需要调用 Python 类：
+
+```bash
+wechat-local-interface \
+  --snapshot ./wechat-snapshot \
+  --source-id my-wechat \
+  rpc < requests.ndjson > responses.ndjson
+```
+
+每行请求使用 `protocol_version`、`request_id`、`operation`、`params` 四个字段；每行响应使用 `ok`、`data`/`error` 和 `meta`。完整的信封、错误码、操作名、记录字段和机器可读 JSON Schema 见 [`docs/protocol.md`](docs/protocol.md) 以及 [`schemas/`](schemas)。
+
 ## Python API 快速开始
 
 ```python

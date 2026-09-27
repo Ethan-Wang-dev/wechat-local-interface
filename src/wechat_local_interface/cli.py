@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from .protocol import WeChatProtocol
 from .source import WeChatSource
 
 
@@ -16,6 +17,8 @@ def parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status", help="查看连接器状态")
+    rpc = sub.add_parser("rpc", help="通过 stdin/stdout 运行语言无关 JSON 协议")
+    rpc.add_argument("--file", type=Path, help="逐行读取 JSON 请求；省略时读取 stdin")
     conversations = sub.add_parser("conversations", help="列出会话")
     conversations.add_argument("--query")
     conversations.add_argument("--kind", action="append", choices=["person", "group"])
@@ -133,7 +136,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         source = WeChatSource(args.snapshot, args.source_id, args.account_username)
-        if args.command == "status":
+        if args.command == "rpc":
+            protocol = WeChatProtocol(source)
+            if args.file:
+                with args.file.open("r", encoding="utf-8") as stream:
+                    for line in protocol.handle_lines(stream):
+                        print(line)
+            else:
+                for line in protocol.handle_lines(sys.stdin):
+                    print(line)
+        elif args.command == "status":
             output(source.status())
         elif args.command == "conversations":
             output(source.list_conversations(args.query, kinds=args.kind, has_messages=args.has_messages))

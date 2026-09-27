@@ -6,8 +6,11 @@ import tempfile
 import unittest
 from hashlib import md5
 from pathlib import Path
+from unittest import mock
 
 from wechat_local_interface.cli import main
+from wechat_local_interface import PROTOCOL_VERSION, WeChatProtocol
+from wechat_local_interface.protocol import OPERATION_FIELDS
 from wechat_local_interface.source import WeChatSource
 
 
@@ -412,6 +415,61 @@ class WeChatRelationshipTests(unittest.TestCase):
             code = main(["--snapshot", str(self.root), "--source-id", "relationships", "common-groups", "person-a", "person-b"])
         self.assertEqual(0, code)
         self.assertEqual([conversation_id], [row["id"] for row in json.loads(out.getvalue())])
+
+    def test_language_neutral_protocol_envelope_and_errors(self):
+        source = self.source()
+        protocol = WeChatProtocol(source)
+        status = protocol.handle({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": "req-1",
+            "operation": "status",
+            "params": {},
+        })
+        self.assertTrue(status["ok"])
+        self.assertEqual("req-1", status["meta"]["request_id"])
+        self.assertEqual(PROTOCOL_VERSION, status["meta"]["protocol_version"])
+        conversation_id = source.list_conversations()[0]["id"]
+        members = protocol.handle({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": "req-2",
+            "operation": "groups.members",
+            "params": {"conversation_id": conversation_id, "is_friend": True},
+        })
+        self.assertTrue(members["ok"])
+        self.assertEqual(2, members["data"]["total_in_scope"])
+        bad = protocol.handle({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": "req-3",
+            "operation": "contacts.list",
+            "params": {"unsupported": True},
+        })
+        self.assertFalse(bad["ok"])
+        self.assertEqual("invalid_argument", bad["error"]["code"])
+        bad_type = protocol.handle({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": "req-4",
+            "operation": "groups.common",
+            "params": {"actor_ids": ["person-a", 2]},
+        })
+        self.assertEqual("invalid_argument", bad_type["error"]["code"])
+        self.assertEqual("invalid_json", json.loads(protocol.handle_line("{bad"))["error"]["code"])
+        catalog = json.loads((Path(__file__).parents[1] / "schemas/mousia.wechat.operations.v1.json").read_text())
+        self.assertEqual(set(OPERATION_FIELDS), {item["name"] for item in catalog["operations"]})
+
+    def test_cli_rpc_ndjson(self):
+        out = io.StringIO()
+        request = json.dumps({
+            "protocol_version": PROTOCOL_VERSION,
+            "request_id": "cli-1",
+            "operation": "status",
+            "params": {},
+        })
+        with contextlib.redirect_stdout(out), mock.patch("sys.stdin", io.StringIO(request + "\n")):
+            code = main(["--snapshot", str(self.root), "--source-id", "relationships", "rpc"])
+        self.assertEqual(0, code)
+        response = json.loads(out.getvalue())
+        self.assertTrue(response["ok"])
+        self.assertEqual("cli-1", response["meta"]["request_id"])
 
     @staticmethod
     def load(bundle, filename):

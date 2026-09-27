@@ -5,7 +5,7 @@
 Python 包：`wechat_local_interface`
 CLI：`wechat-local-interface`
 
-本文档描述当前代码实际提供的 Python API、CLI、返回结构、过滤规则、分页游标、导出包和错误行为。它不描述解密过程；解密由用户选择的外部工具完成。
+本文档描述当前代码实际提供的 Python API、CLI、返回结构、过滤规则、分页游标、导出包和错误行为。跨语言集成使用 [`docs/protocol.md`](protocol.md) 中的 JSON/NDJSON 协议和 [`schemas/`](../schemas)；不需要绑定 Python。它不描述解密过程；解密由用户选择的外部工具完成。
 
 ## 0. 解密前置工具
 
@@ -829,6 +829,14 @@ wechat-local-interface --snapshot DIR --source-id ID status
 ```
 
 输出 `status()` 的 JSON 对象。
+
+### `rpc`
+
+```bash
+wechat-local-interface --snapshot DIR --source-id ID rpc [--file REQUESTS.ndjson]
+```
+
+从 `--file` 或 stdin 逐行读取 `mousia.wechat.protocol.v1` 请求，并逐行输出协议响应。请求、错误码和所有操作定义见 [`docs/protocol.md`](protocol.md)。
 
 ### `contacts`
 

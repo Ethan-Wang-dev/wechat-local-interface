@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mousia.dev/schemas/wechat/records/v0.json",
+  "title": "Mousia WeChat Local Interface records v0",
+  "description": "Language-neutral data record definitions returned in protocol data fields and JSONL exports.",
+  "$defs": {
+    "id": {"type": ["string", "null"]},
+    "stringOrNull": {"type": ["string", "null"]},
+    "boolOrNull": {"type": ["boolean", "null"]},
+    "provenance": {"type": "object", "additionalProperties": true},
+    "friendshipEvidence": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "database": {"type": ["string", "null"]},
+        "local_type": {"type": ["integer", "null"]},
+        "delete_flag": {"type": ["integer", "null"]}
+      }
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "username", "display_name", "kind", "account_kind", "is_subscription", "in_contact_database", "is_friend", "friend_status", "is_self"],
+      "properties": {
+        "id": {"type": "string"},
+        "username": {"type": "string"},
+        "display_name": {"type": "string"},
+        "kind": {"enum": ["person", "group", "official_account"]},
+        "account_kind": {"type": "string"},
+        "is_subscription": {"type": "boolean"},
+        "in_contact_database": {"type": "boolean"},
+        "is_friend": {"$ref": "#/$defs/boolOrNull"},
+        "friend_status": {"enum": ["friend", "non_friend", "unknown", "self", "deleted", "not_applicable"]},
+        "is_self": {"$ref": "#/$defs/boolOrNull"},
+        "friendship_evidence": {"$ref": "#/$defs/friendshipEvidence"}
+      }
+    },
+    "conversation": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "display_name", "kind"],
+      "properties": {
+        "id": {"type": "string"},
+        "display_name": {"type": "string"},
+        "kind": {"enum": ["person", "group"]},
+        "account_kind": {"type": "string"},
+        "is_official": {"type": "boolean"},
+        "message_table": {"type": "string"},
+        "has_messages": {"type": "boolean"},
+        "member_count": {"type": ["integer", "null"], "minimum": 0},
+        "owner_actor_id": {"$ref": "#/$defs/stringOrNull"},
+        "membership_source": {"enum": ["contact_db", "message_observed", null]}
+      }
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["member_id", "actor_id", "username", "display_name", "in_contact_database", "is_friend", "friend_status", "is_self", "is_owner", "provenance"],
+      "properties": {
+        "member_id": {"type": "string"},
+        "actor_id": {"$ref": "#/$defs/id"},
+        "username": {"$ref": "#/$defs/stringOrNull"},
+        "display_name": {"type": "string"},
+        "in_contact_database": {"type": "boolean"},
+        "is_friend": {"$ref": "#/$defs/boolOrNull"},
+        "friend_status": {"enum": ["friend", "non_friend", "unknown", "self", "deleted", "not_applicable"]},
+        "is_self": {"$ref": "#/$defs/boolOrNull"},
+        "is_owner": {"type": "boolean"},
+        "friendship_evidence": {"$ref": "#/$defs/friendshipEvidence"},
+        "provenance": {"$ref": "#/$defs/provenance"}
+      }
+    },
+    "groupMembersEnvelope": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["schema_version", "source_id", "conversation", "owner", "member_count", "total_in_scope", "members", "membership_source", "complete", "friend_counts"],
+      "properties": {
+        "schema_version": {"const": "mousia.wechat.v0"},
+        "source_id": {"type": "string"},
+        "conversation": {"$ref": "#/$defs/conversation"},
+        "owner": {"anyOf": [{"$ref": "#/$defs/actor"}, {"type": "null"}]},
+        "member_count": {"type": "integer", "minimum": 0},
+        "total_in_scope": {"type": "integer", "minimum": 0},
+        "members": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+        "membership_source": {"enum": ["contact_db", "message_observed", "unavailable"]},
+        "complete": {"type": "boolean"},
+        "friend_counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "type", "subject_id", "object_id", "subject", "object", "membership_source", "complete", "provenance"],
+      "properties": {
+        "id": {"type": "string"},
+        "type": {"enum": ["member_of", "owns"]},
+        "subject_id": {"type": "string"},
+        "object_id": {"type": "string"},
+        "subject": {"$ref": "#/$defs/actor"},
+        "object": {"$ref": "#/$defs/conversation"},
+        "membership_source": {"enum": ["contact_db", "message_observed", "unavailable"]},
+        "complete": {"type": "boolean"},
+        "provenance": {"$ref": "#/$defs/provenance"}
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": {"enum": ["complete", "metadata_only", "unsupported", "decode_error"]},
+        "reason": {"$ref": "#/$defs/stringOrNull"}
+      }
+    },
+    "attachment": {"type": "object", "additionalProperties": true},
+    "resource": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["schema_version", "resource_type", "id", "source_id", "author_id", "author_username", "created_at", "kind", "text", "title", "links", "attachments", "quality", "provenance", "revision"],
+      "properties": {
+        "schema_version": {"const": "mousia.wechat.v0"},
+        "resource_type": {"enum": ["message", "favorite", "moment"]},
+        "id": {"type": "string"},
+        "source_id": {"type": "string"},
+        "author_id": {"$ref": "#/$defs/id"},
+        "author_username": {"$ref": "#/$defs/stringOrNull"},
+        "created_at": {"$ref": "#/$defs/stringOrNull"},
+        "kind": {"type": "string"},
+        "text": {"$ref": "#/$defs/stringOrNull"},
+        "title": {"$ref": "#/$defs/stringOrNull"},
+        "links": {"type": "array", "items": {"type": "string"}},
+        "attachments": {"type": "array", "items": {"$ref": "#/$defs/attachment"}},
+        "quality": {"$ref": "#/$defs/quality"},
+        "provenance": {"$ref": "#/$defs/provenance"},
+        "revision": {"type": "string"}
+      }
+    },
+    "message": {
+      "allOf": [
+        {"$ref": "#/$defs/resource"},
+        {"type": "object", "required": ["conversation_id", "direction", "relations"], "properties": {"conversation_id": {"type": "string"}, "direction": {"enum": ["incoming", "outgoing", "unknown"]}, "relations": {"type": "array", "items": {"type": "object", "additionalProperties": true}}}}
+      ]
+    },
+    "favorite": {"$ref": "#/$defs/resource"},
+    "moment": {"$ref": "#/$defs/resource"},
+    "page": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["schema_version", "source_id", "items", "next_cursor", "total_in_scope"],
+      "properties": {
+        "schema_version": {"const": "mousia.wechat.v0"},
+        "source_id": {"type": "string"},
+        "items": {"type": "array", "items": {}},
+        "next_cursor": {"$ref": "#/$defs/stringOrNull"},
+        "total_in_scope": {"type": "integer", "minimum": 0}
+      }
+    },
+    "exportManifest": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["schema_version", "source_id", "source_kind", "privacy", "snapshot", "filters", "counts"],
+      "properties": {
+        "schema_version": {"const": "mousia.wechat.v0"},
+        "source_id": {"type": "string"},
+        "source_kind": {"const": "wechat_mac_decrypted_vault"},
+        "privacy": {"type": "object", "additionalProperties": true},
+        "snapshot": {"type": "string"},
+        "filters": {"type": "object"},
+        "counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+      }
+    }
+  }
+}

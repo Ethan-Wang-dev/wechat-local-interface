@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mousia.dev/schemas/wechat/operations/v1.json",
+  "title": "Mousia WeChat Local Interface operation catalog v1",
+  "description": "Machine-readable parameter definitions for every protocol operation. Each operation is sent in the protocol request params object.",
+  "$defs": {
+    "id": {"type": "string", "minLength": 1},
+    "stringArray": {"type": "array", "items": {"type": "string"}},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 5000},
+    "cursor": {"type": "string", "minLength": 1},
+    "boolOrNull": {"type": ["boolean", "null"]},
+    "time": {"type": "string", "format": "date-time"},
+    "messageFilters": {
+      "type": "object",
+      "properties": {
+        "start": {"$ref": "#/$defs/time"},
+        "end": {"$ref": "#/$defs/time"},
+        "author_usernames": {"$ref": "#/$defs/stringArray"},
+        "author_ids": {"$ref": "#/$defs/stringArray"},
+        "kinds": {"$ref": "#/$defs/stringArray"},
+        "directions": {"$ref": "#/$defs/stringArray"},
+        "qualities": {"$ref": "#/$defs/stringArray"},
+        "query": {"type": "string"},
+        "has_links": {"$ref": "#/$defs/boolOrNull"},
+        "has_attachments": {"$ref": "#/$defs/boolOrNull"},
+        "limit": {"$ref": "#/$defs/limit"},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "official_only": {"$ref": "#/$defs/boolOrNull"}
+      }
+    },
+    "collectionFilters": {
+      "type": "object",
+      "properties": {
+        "query": {"type": "string"},
+        "start": {"$ref": "#/$defs/time"},
+        "end": {"$ref": "#/$defs/time"},
+        "author_usernames": {"$ref": "#/$defs/stringArray"},
+        "author_ids": {"$ref": "#/$defs/stringArray"},
+        "kinds": {"$ref": "#/$defs/stringArray"},
+        "has_links": {"$ref": "#/$defs/boolOrNull"},
+        "has_attachments": {"$ref": "#/$defs/boolOrNull"},
+        "limit": {"$ref": "#/$defs/limit"},
+        "cursor": {"$ref": "#/$defs/cursor"}
+      }
+    },
+    "messageExportFilters": {
+      "allOf": [{"$ref": "#/$defs/messageFilters"}],
+      "not": {"required": ["cursor"]}
+    },
+    "collectionExportFilters": {
+      "allOf": [{"$ref": "#/$defs/collectionFilters"}],
+      "not": {"required": ["cursor"]}
+    }
+  },
+  "type": "object",
+  "required": ["protocol_version", "operations"],
+  "properties": {
+    "protocol_version": {"const": "mousia.wechat.protocol.v1"},
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "description", "params_schema", "result"],
+        "properties": {
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "params_schema": {"type": "object"},
+          "result": {"type": "string"}
+        }
+      }
+    }
+  },
+  "operations": [
+    {"name": "status", "description": "Return source capabilities and snapshot metadata.", "params_schema": {"type": "object", "additionalProperties": false}, "result": "status"},
+    {"name": "contacts.list", "description": "List actors with optional subscription and friendship filters.", "params_schema": {"type": "object", "additionalProperties": false, "properties": {"query": {"type": "string"}, "kinds": {"$ref": "#/$defs/stringArray"}, "is_subscription": {"$ref": "#/$defs/boolOrNull"}, "is_friend": {"$ref": "#/$defs/boolOrNull"}, "limit": {"$ref": "#/$defs/limit"}}}, "result": "actor[]"},
+    {"name": "conversations.list", "description": "List conversations and group relationship metadata.", "params_schema": {"type": "object", "additionalProperties": false, "properties": {"query": {"type": "string"}, "kinds": {"$ref": "#/$defs/stringArray"}, "has_messages": {"$ref": "#/$defs/boolOrNull"}}}, "result": "conversation[]"},
+    {"name": "official.list", "description": "List official accounts and their conversation ids.", "params_schema": {"type": "object", "additionalProperties": false, "properties": {"query": {"type": "string"}, "limit": {"$ref": "#/$defs/limit"}}}, "result": "actor[]"},
+    {"name": "groups.members", "description": "List complete or message-observed members of one group.", "params_schema": {"type": "object", "additionalProperties": false, "required": ["conversation_id"], "properties": {"conversation_id": {"$ref": "#/$defs/id"}, "query": {"type": "string"}, "is_friend": {"$ref": "#/$defs/boolOrNull"}, "is_owner": {"$ref": "#/$defs/boolOrNull"}, "limit": {"$ref": "#/$defs/limit"}}}, "result": "group_members_envelope"},
+    {"name": "contacts.groups", "description": "List groups containing one actor.", "params_schema": {"type": "object", "additionalProperties": false, "required": ["actor_id"], "properties": {"actor_id": {"$ref": "#/$defs/id"}, "query": {"type": "string"}, "limit": {"$ref": "#/$defs/limit"}}}, "result": "conversation[]"},
+    {"name": "groups.common", "description": "List groups shared by all supplied actors.", "params_schema": {"type": "object", "additionalProperties": false, "required": ["actor_ids"], "properties": {"actor_ids": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/id"}}, "query": {"type": "string"}, "limit": {"$ref": "#/$defs/limit"}}}, "result": "conversation[]"},
+    {"name": "relationships.list", "description": "List actor-to-group member_of and owns edges.", "params_schema": {"type": "object", "additionalProperties": false, "properties": {"subject_id": {"$ref": "#/$defs/id"}, "object_id": {"$ref": "#/$defs/id"}, "relationship_types": {"$ref": "#/$defs/stringArray"}, "limit": {"$ref": "#/$defs/limit"}}}, "result": "relationship[]"},
+    {"name": "messages.read", "description": "Read normalized messages for selected conversations.", "params_schema": {"allOf": [{"$ref": "#/$defs/messageFilters"}, {"type": "object", "required": ["conversation_ids"], "properties": {"conversation_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/id"}}}}]}, "result": "message_page"},
+    {"name": "messages.search", "description": "Search normalized messages globally or in selected conversations.", "params_schema": {"allOf": [{"$ref": "#/$defs/messageFilters"}, {"type": "object", "required": ["query"], "properties": {"query": {"type": "string", "minLength": 1}, "conversation_ids": {"type": "array", "items": {"$ref": "#/$defs/id"}}}}]}, "result": "message_page"},
+    {"name": "messages.export", "description": "Export a complete message JSONL bundle.", "params_schema": {"allOf": [{"$ref": "#/$defs/messageExportFilters"}, {"type": "object", "required": ["conversation_ids", "output"], "properties": {"conversation_ids": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/id"}}, "output": {"type": "string", "minLength": 1}, "previous": {"type": "string"}}}]}, "result": "export_manifest"},
+    {"name": "favorites.list", "description": "Read paginated favorite records.", "params_schema": {"$ref": "#/$defs/collectionFilters"}, "result": "collection_page"},
+    {"name": "favorites.search", "description": "Search favorite records.", "params_schema": {"allOf": [{"$ref": "#/$defs/collectionFilters"}, {"type": "object", "required": ["query"]}]}, "result": "collection_page"},
+    {"name": "favorites.export", "description": "Export a complete favorite JSONL bundle.", "params_schema": {"allOf": [{"$ref": "#/$defs/collectionExportFilters"}, {"type": "object", "required": ["output"], "properties": {"output": {"type": "string", "minLength": 1}, "previous": {"type": "string"}}}]}, "result": "export_manifest"},
+    {"name": "moments.list", "description": "Read paginated moments records.", "params_schema": {"$ref": "#/$defs/collectionFilters"}, "result": "collection_page"},
+    {"name": "moments.search", "description": "Search moments records.", "params_schema": {"allOf": [{"$ref": "#/$defs/collectionFilters"}, {"type": "object", "required": ["query"]}]}, "result": "collection_page"},
+    {"name": "moments.export", "description": "Export a complete moments JSONL bundle.", "params_schema": {"allOf": [{"$ref": "#/$defs/collectionExportFilters"}, {"type": "object", "required": ["output"], "properties": {"output": {"type": "string", "minLength": 1}, "previous": {"type": "string"}}}]}, "result": "export_manifest"},
+    {"name": "search.all", "description": "Search messages, favorites, and moments in one result envelope.", "params_schema": {"type": "object", "additionalProperties": false, "required": ["query"], "properties": {"query": {"type": "string", "minLength": 1}, "scopes": {"type": "array", "items": {"enum": ["messages", "favorites", "moments"]}}, "start": {"$ref": "#/$defs/time"}, "end": {"$ref": "#/$defs/time"}, "limit": {"$ref": "#/$defs/limit"}}}, "result": "unified_search"}
+  ]
+}
