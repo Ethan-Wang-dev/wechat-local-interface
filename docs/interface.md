@@ -198,7 +198,7 @@ status() -> dict
   "friendship_classification": true,
   "decoders": {"utf8": true, "zstandard": true},
   "snapshot_version": "<32 位十六进制字符串>",
-  "capabilities": ["contacts", "conversations", "messages", "search", "filters", "export", "official_accounts", "favorites", "moments", "group_members", "relationships"],
+  "capabilities": ["contacts", "conversations", "messages", "search", "filters", "export", "official_accounts", "favorites", "favorite_tags", "moments", "moment_interactions", "group_members", "relationships", "contact_labels", "sessions", "special_events", "media_assets", "emoticons"],
   "limitations": ["no_media_body_decode", "no_network", "no_knowledge_store_write"]
 }
 ```
@@ -208,7 +208,7 @@ status() -> dict
 - `resource_index`、`favorite_index`、`moments_index` 表示对应数据库文件是否存在；
 - `decoders.zstandard` 表示当前 Python 环境是否安装 zstandard，不代表快照一定含压缩消息；
 - `snapshot_version` 会随源文件列表、大小、inode 和修改时间变化；
-- `capabilities` 表示连接器实现的能力，具体可选数据库是否存在由三个 `*_index` 字段判断。
+- `capabilities` 表示连接器实现的能力；`resource_index`、`favorite_index`、`moments_index`、`session_index`、`general_event_index`、`media_index`、`emoticon_index` 表示对应可选索引是否存在。
 
 ### 4.2 `list_contacts()`
 
@@ -957,7 +957,7 @@ wechat-local-interface --snapshot DIR --source-id ID favorites|moments \
 - 只支持已解密的 Mac 4.x 数据布局；Windows 快照不在本接口范围内。
 - 不包含密钥提取、解密、增量解密调度或微信客户端自动化。
 - 不读取媒体正文，也不保证本地媒体文件仍然存在。
-- 复杂合并转发、小程序、卡片、朋友圈互动和部分微信内部类型只做保守的元数据标准化。
+- 复杂合并转发、小程序、卡片和部分微信内部类型只做保守的元数据标准化；朋友圈互动通过 `moments.interactions` 单独读取。
 - 不做摘要、Embedding、知识库写入或 HTTP 服务。
 - 数据库字段会随微信版本变化；未知字段或表结构会明确失败或降级为 `unsupported`，不会静默猜测。
 

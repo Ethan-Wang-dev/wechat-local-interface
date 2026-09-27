@@ -51,6 +51,10 @@ UTF-8 时会跳过值，只保留结构信息。
 - 收藏标签：`favorites.tags`；朋友圈互动：`moments.interactions`；特殊事件：
   `events.list`。
 
+`revokemessage` 表表示撤回事件，不等于原消息恢复。事件的 `content` 可能只是
+撤回通知载荷；只有对应消息仍存在于消息分片时，才可以用服务器消息 ID 尝试关联
+原文。当前快照该表为空。
+
 `visibility.policy` 在本地数据库没有明确的“3 天/1 个月/半年/全部”
 枚举时返回 `unknown`，不会根据时间范围猜测。`SnsTopItem_1` 是本地顶层
 索引，不能单独证明某条记录对当前账号可见；只有 XML 的 `isTop=1` 才提升

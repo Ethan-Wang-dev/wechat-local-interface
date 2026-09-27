@@ -126,6 +126,8 @@ wechat-local-interface \
 | `contacts.list` | 联系人、群聊、好友状态 | actor array |
 | `conversations.list` | 会话和群成员元数据 | conversation array |
 | `official.list` | 公众号 | actor array |
+| `contacts.labels` | 联系人标签 | label array |
+| `sessions.list` | 未读、草稿和最后消息 | session array |
 | `groups.members` | 群成员、群主和好友分类 | group member envelope |
 | `contacts.groups` | 联系人所在群 | conversation array |
 | `groups.common` | 多个联系人共同群 | conversation array |
@@ -134,7 +136,12 @@ wechat-local-interface \
 | `messages.search` | 搜索消息 | message page |
 | `messages.export` | 导出完整消息包 | export manifest |
 | `favorites.list/search/export` | 收藏夹读取、搜索、导出 | collection page/manifest |
+| `favorites.tags` | 收藏标签 | tag array |
 | `moments.list/search/export` | 朋友圈读取、搜索、导出 | collection page/manifest |
+| `moments.interactions` | 朋友圈评论、回复和互动 | interaction array |
+| `events.list` | 红包、转账、好友申请、撤回事件 | event array |
+| `assets.list` | 文件、图片、视频、头像索引 | asset array |
+| `emoticons.list` | 表情包包信息 | package array |
 | `search.all` | 跨消息、收藏夹、朋友圈搜索 | unified search |
 
 操作的完整参数在 `schemas/wechat.local.operations.v1.json` 中。参数命名使用 snake_case，避免绑定任何语言的命名风格；语言 SDK 可以在本地转换成 camelCase 或 idiomatic names，但在线路上必须使用协议字段名。
